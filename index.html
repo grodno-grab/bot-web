@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Telegram</title>
+    <script src="tdweb.js?versionId=995PZNapqW8PTkwfEh9nc6XMCvkx4Klp" integrity="sha384-Tstta7EDRSklqoRxhrkwVxScQ1Na6S1JJmVX6N8jU6RV5Vth7B7Tlm+IyBfEHvc6" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="styles.css?versionId=mPa0fU90vvFMXX29r1dxOlNyPYUQcSEz" integrity="sha384-yKKnaMpfOTGFBgWk6zKnQUk7v8Q1jscfhBZEj0zNSEbEkIgq2Sw75AS1UfkLWKu3" crossorigin="anonymous">
+  </head>
+  <body>
+    <div class="card">
+
+      <div id="screen-intro" class="screen active">
+        <h2>Перед началом</h2>
+        <p><strong>Важно:</strong> единственным легитимным источником ссылки на эту страницу является бот <a href="https://t.me/FindMessagesBot" target="_blank">@FindMessagesBot</a>. Рекомендуем в режиме инкогнито загуглить «<a href="https://www.google.com/search?q=%D0%91%D0%B5%D0%BB%D0%B0%D1%80%D1%83%D1%81%D1%8C+%D0%B1%D0%BE%D1%82+%D0%BF%D0%BE%D0%B8%D1%81%D0%BA+%D1%81%D0%BE%D0%BE%D0%B1%D1%89%D0%B5%D0%BD%D0%B8%D0%B9" target="_blank">Беларусь бот поиск сообщений</a>», среди результатов найти упоминание бота в независимых СМИ, перейти в него и взять ссылку на эту страницу из описания бота. Если вы нашли ссылку на эту страницу в каком-то посте/репосте в каком-то чате или получили от незнакомого источника — <strong>немедленно закройте страницу</strong> и <a href="https://t.me/GrodnograbSOS" target="_blank">сообщите нам</a>.</p>
+        <p>Этот инструмент — неофициальный <strong>веб-клиент Telegram</strong>, цель которого — помочь удалить сообщения из чатов, которые нашел <a href="https://t.me/FindMessagesBot" target="_blank">@FindMessagesBot</a>. Для его работы потребуется вход в ваш аккаунт Telegram.</p>
+        <p>Что произойдёт:</p>
+        <ol>
+          <li>Вы пройдёте стандартную авторизацию Telegram — введёте номер телефона, код подтверждения из приложения и, если настроен, двухфакторный пароль.</li>
+          <li>После входа приложение получит от бота список сообщений, которые нужно удалить.</li>
+          <li>Вы подтвердите удаление, и сообщения будут удалены от вашего имени.</li>
+          <li>По завершении бот выйдет из аккаунта (проверьте в разделе Конфиденциальность - Активные сеансы), а все данные сессии будут удалены из браузера.</li>
+        </ol>
+        <p>Всё происходит <strong>локально, прямо в вашем браузере</strong>. Никакие данные не отправляются на сторонние серверы.</p>
+        <p class="intro-source">Исходный код страницы открыт для ознакомления — он намеренно сохранён в читаемом виде, понятном техническим специалистам. Вы можете открыть его прямо сейчас (Ctrl+U) и сравнить с <a href="https://github.com/grodno-grab/bot-web" target="_blank">репозиторием</a>.</p>
+      </div>
+
+      <!-- Working/loading screen is shown first while TDLib initialises -->
+      <div id="screen-working" class="screen">
+        <div id="working-spinner" class="spinner"></div>
+        <p id="working-status">Инициализация…</p>
+      </div>
+
+      <div id="screen-phone" class="screen">
+        <h2>Вход в Telegram</h2>
+        <p class="hint">Введите номер телефона в международном формате.</p>
+        <input id="inp-phone" type="tel" placeholder="+375 XX 0000000" autocomplete="tel">
+        <div id="err-phone" class="field-error"></div>
+        <button id="btn-phone">Продолжить</button>
+      </div>
+
+      <div id="screen-code" class="screen">
+        <h2>Код подтверждения</h2>
+        <p class="hint">Введите код, который Telegram отправил вам.</p>
+        <input id="inp-code" type="text" placeholder="12345" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+        <div id="err-code" class="field-error"></div>
+        <button id="btn-code">Подтвердить</button>
+      </div>
+
+      <div id="screen-password" class="screen">
+        <h2>Двухэтапная проверка</h2>
+        <p class="hint">Введите облачный пароль.</p>
+        <input id="inp-password" type="password" placeholder="Пароль" autocomplete="current-password">
+        <div id="err-password" class="field-error"></div>
+        <button id="btn-password">Продолжить</button>
+      </div>
+
+      <div id="screen-error" class="screen">
+        <h2>Что-то пошло не так</h2>
+        <p class="hint" id="error-msg"></p>
+        <button onclick="location.reload()">Перезагрузить</button>
+      </div>
+
+      <div id="screen-confirm" class="screen">
+        <h2>Приступить к удалению сообщений?</h2>
+        <button id="btn-confirm">Начать удаление</button>
+      </div>
+
+    </div>
+    <button id="btn-cancel-exit" style="display:none">Отменить и выйти</button>
+    <div id="intro-footer" class="active">
+      <button id="btn-intro-cancel">Отмена</button>
+      <button id="btn-intro-proceed">Продолжить</button>
+    </div>
+    <script>
+      // ============================================================================
+      // Configuration
+      // ============================================================================
+
+      const API_ID    = 21929053;
+      const API_HASH  = '531ad33ad3e2af1dab49d59bc1062ec3';
+
+      const BOT_CHAT_ID  = 6092224989;
+      const BOT_USERNAME = 'FindMessagesBot';
+
+      const BOT_START_PARAMETER  = 'wtg'; // deep-link parameter for sendBotStartMessage
+      const BOT_COMMAND_SUCCESS = '/wtg_done';
+      const BOT_COMMAND_FAILURE = '/wtg_fail';
+
+      // TDLib represents message IDs as server_id * 2^20 (a 20-bit left shift)
+      const TDLIB_MESSAGE_ID_MULTIPLIER = 2 ** 20;
+
+      // Channels and supergroups require the -100 prefix when looked up by id in TDLib
+      const CHANNEL_CHAT_ID_PREFIX = '-100';
+
+      // TDLib instance name — used for the client and for locating its IndexedDB databases
+      const TDLIB_INSTANCE_NAME = 'tdlib-session';
+
+      const ALLOWED_ORIGINS = ['https://s3.amazonaws.com/t.t/'];
+
+      const EXIT_BUTTON_LABEL_CANCEL = 'Отменить и выйти';
+      const EXIT_BUTTON_LABEL_DONE   = 'Выйти';
+      const EXIT_FALLBACK_URL        = 'https://www.google.com/';
+
+      const SCREEN = {
+        INTRO:    'intro',
+        WORKING:  'working',
+        PHONE:    'phone',
+        CODE:     'code',
+        PASSWORD: 'password',
+        ERROR:    'error',
+        CONFIRM:  'confirm',
+      };
+
+      // Which input to auto-focus when an auth screen becomes active
+      const SCREEN_INPUT_ID = {
+        [SCREEN.PHONE]:    'inp-phone',
+        [SCREEN.CODE]:     'inp-code',
+        [SCREEN.PASSWORD]: 'inp-password',
+      };
+
+      // ============================================================================
+      // Environment guard
+      // ============================================================================
+
+      function assertAllowedContext() {
+        const isEmbedded = window.self !== window.top;
+        const isWrongUrl = !ALLOWED_ORIGINS.some((o) => location.href.startsWith(o));
+        if (isEmbedded || isWrongUrl) {
+          document.body.innerHTML = '<p style="padding:24px;font-family:sans-serif">Страница должна быть открыта напрямую по своему адресу.</p>';
+          throw new Error('Invalid context');
+        }
+      }
+
+      assertAllowedContext();
+
+      // ============================================================================
+      // UI
+      // ============================================================================
+
+      let introConfirmed = false;
+      let pendingScreen  = null;
+
+      function showScreen(screenId, statusText, { spinner = true } = {}) {
+        // While the intro hasn't been confirmed, buffer all non-error screens
+        if (!introConfirmed && screenId !== SCREEN.INTRO && screenId !== SCREEN.ERROR) {
+          pendingScreen = { screenId, statusText, spinner };
+          return;
+        }
+
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(`screen-${screenId}`).classList.add('active');
+
+        const isIntro = screenId === SCREEN.INTRO;
+        document.getElementById('btn-cancel-exit').style.display = isIntro ? 'none' : '';
+        document.getElementById('intro-footer').classList.toggle('active', isIntro);
+        if (screenId === SCREEN.WORKING && statusText) {
+          document.getElementById('working-status').textContent = statusText;
+          document.getElementById('working-spinner').style.display = spinner ? '' : 'none';
+          if (!spinner) {
+            document.getElementById('btn-cancel-exit').textContent = EXIT_BUTTON_LABEL_DONE;
+          }
+        }
+        if (screenId === SCREEN.ERROR && statusText) {
+          document.getElementById('error-msg').textContent = statusText;
+        }
+
+        const inputId = SCREEN_INPUT_ID[screenId];
+        if (inputId) document.getElementById(inputId).focus();
+      }
+
+      function showConfirmScreen() {
+        showScreen(SCREEN.CONFIRM);
+        return new Promise(resolve => {
+          document.getElementById('btn-confirm').onclick = resolve;
+        });
+      }
+
+      function setFieldError(fieldName, message) {
+        document.getElementById(`err-${fieldName}`).textContent = message ?? '';
+      }
+
+      function setFieldLoading(fieldName, isLoading) {
+        document.getElementById(`btn-${fieldName}`).disabled = isLoading;
+      }
+
+      // ============================================================================
+      // Worker version AWS S3 pinning
+      // ============================================================================
+
+      const _WORKER_VERSIONS = {
+        'ce70fb8f3c7a4342d115.worker.js': 'hF1ThyLVpURearHDujgoENqAaxVDSKx4',
+        '1.ce70fb8f3c7a4342d115.worker.js': 'E8_4oaDIoUyPkd9L5foY7wgZrC43X6vz',
+      };
+
+      (function() {
+        const NativeWorker = window.Worker;
+        window.Worker = function(url, opts) {
+          if (typeof url === 'string') {
+            const base = url.split('/').pop().split('?')[0];
+            const ver = _WORKER_VERSIONS[base];
+            if (ver) url = url.split('?')[0] + '?versionId=' + ver;
+          }
+          return new NativeWorker(url, opts);
+        };
+        window.Worker.prototype = NativeWorker.prototype;
+      }());
+
+      // ============================================================================
+      // TDLib client
+      // ============================================================================
+
+      const TdClient = tdweb.default;
+
+      let tg;
+      try {
+        tg = new TdClient({
+          logVerbosityLevel: 1,
+          mode: 'wasm',
+          instanceName: TDLIB_INSTANCE_NAME,
+          readOnly: false,
+          isBackground: false,
+          useDatabase: false,
+          wasmUrl: '5e206a8f21790c38ae50cf54b7b9aca7.wasm?versionId=0ZKko7HNdmPTn60mwIY0N05QVK6.sZ5y',
+        });
+      } catch (err) {
+        showScreen(SCREEN.ERROR, `Не удалось запустить TDLib: ${err.message}`);
+        throw err;
+      }
+
+      function tgSend(type, params = {}) {
+        return tg.send({ '@type': type, ...params });
+      }
+
+      let isSessionActive = false;
+      let tdlibLoggedOut  = false;
+
+      // If TDLib never responds (Worker crash, WASM load failure),
+      // show an error instead of hanging silently.
+      const initTimeoutId = setTimeout(() => {
+        showScreen(SCREEN.ERROR, 'Инициализация не завершилась. Попробуйте обновить страницу.');
+      }, 60000);
+
+      tg.onUpdate = handleTdUpdate;
+
+      function handleTdUpdate(update) {
+        clearTimeout(initTimeoutId);
+        switch (update['@type']) {
+          case 'updateAuthorizationState':
+            handleAuthStateChange(update.authorization_state)
+              .catch(err => showScreen(SCREEN.ERROR, err.message));
+            break;
+
+          case 'updateNewMessage':
+            if (isSessionActive) {
+              onBotMessage(update.message)
+                .catch(err => showScreen(SCREEN.ERROR, err.message));
+            }
+            break;
+        }
+      }
+
+      // ============================================================================
+      // Authorization state machine
+      // ============================================================================
+
+      async function handleAuthStateChange(state) {
+        switch (state['@type']) {
+          case 'authorizationStateWaitTdlibParameters':
+            await tgSend('setTdlibParameters', {
+              api_id: API_ID,
+              api_hash: API_HASH,
+              system_language_code: navigator.language || 'en',
+              device_model: 'Web',
+              system_version: navigator.platform || 'Unknown',
+              application_version: '1.0',
+              use_file_database: false,
+              use_message_database: false,
+              use_secret_chats: false,
+              use_test_dc: false,
+            });
+            break;
+
+          case 'authorizationStateWaitEncryptionKey':
+            await tgSend('setDatabaseEncryptionKey', { new_encryption_key: '' });
+            break;
+
+          case 'authorizationStateWaitPhoneNumber':
+            showScreen(SCREEN.PHONE);
+            break;
+
+          case 'authorizationStateWaitCode':
+            showScreen(SCREEN.CODE);
+            break;
+
+          case 'authorizationStateWaitPassword': {
+            const hint = state.password_hint;
+            const hintText = hint
+              ? `Введите облачный пароль. Подсказка: ${hint}`
+              : 'Введите облачный пароль.';
+            document.querySelector('#screen-password .hint').textContent = hintText;
+            showScreen(SCREEN.PASSWORD);
+            break;
+          }
+
+          case 'authorizationStateReady':
+            isSessionActive = true;
+            runBotFlow().catch(err => showScreen(SCREEN.ERROR, err.message));
+            break;
+        }
+      }
+
+      // ============================================================================
+      // Auth form handlers
+      // ============================================================================
+
+      async function submitAuthField(fieldName, action) {
+        setFieldError(fieldName, '');
+        setFieldLoading(fieldName, true);
+        try {
+          await action();
+          // On success the auth state update will switch the screen automatically
+        } catch (err) {
+          setFieldError(fieldName, err.message);
+          setFieldLoading(fieldName, false);
+        }
+      }
+
+      function bindAuthFormListeners() {
+        document.getElementById('btn-phone').addEventListener('click', () =>
+          submitAuthField('phone', () =>
+            tgSend('setAuthenticationPhoneNumber', {
+              phone_number: document.getElementById('inp-phone').value.trim(),
+            })
+          )
+        );
+
+        document.getElementById('btn-code').addEventListener('click', () =>
+          submitAuthField('code', () =>
+            tgSend('checkAuthenticationCode', {
+              code: document.getElementById('inp-code').value.trim(),
+            })
+          )
+        );
+
+        document.getElementById('btn-password').addEventListener('click', () =>
+          submitAuthField('password', () =>
+            tgSend('checkAuthenticationPassword', {
+              password: document.getElementById('inp-password').value,
+            })
+          )
+        );
+
+        ['phone', 'code', 'password'].forEach(fieldName => {
+          document.getElementById(`inp-${fieldName}`).addEventListener('keydown', e => {
+            if (e.key === 'Enter') document.getElementById(`btn-${fieldName}`).click();
+          });
+        });
+      }
+
+      bindAuthFormListeners();
+
+      // ============================================================================
+      // Bot flow orchestration
+      // ============================================================================
+
+      async function runBotFlow() {
+        showScreen(SCREEN.WORKING, 'Запуск бота…');
+
+        const chat = await tgSend('searchPublicChat', { username: BOT_USERNAME });
+        if (chat.id !== BOT_CHAT_ID) throw new Error(`Unexpected bot chat id: ${chat.id}`);
+
+        // Open the chat so TDLib delivers incoming message updates
+        await tgSend('openChat', { chat_id: BOT_CHAT_ID });
+
+        showScreen(SCREEN.WORKING, 'Запрос сообщений…');
+
+        // Unblock the bot in case the user had blocked it, then start with deep-link parameter
+        await tgSend('setMessageSenderBlockList', {
+          block_list: null,
+          sender_id:  { '@type': 'messageSenderUser', user_id: BOT_CHAT_ID },
+        });
+        await tgSend('sendBotStartMessage', {
+          bot_user_id: BOT_CHAT_ID,
+          chat_id:     BOT_CHAT_ID,
+          parameter:   BOT_START_PARAMETER,
+        });
+
+        showScreen(SCREEN.WORKING, 'Получение сообщений…');
+      }
+
+      function sendBotCommand(commandText) {
+        return tgSend('sendMessage', {
+          chat_id: BOT_CHAT_ID,
+          input_message_content: buildTextMessage(commandText),
+        });
+      }
+
+      function buildTextMessage(text) {
+        return {
+          '@type': 'inputMessageText',
+          text: { '@type': 'formattedText', text },
+        };
+      }
+
+      // ============================================================================
+      // Bot document handling
+      // ============================================================================
+
+      async function onBotMessage(msg) {
+        if (msg.chat_id !== BOT_CHAT_ID) return;
+        if (msg.content?.['@type'] !== 'messageDocument') return;
+
+        isSessionActive = false; // process only the first document
+
+        const data = await downloadAndDecryptBotDocument(msg);
+
+        await tgSend('deleteMessages', {
+          chat_id: BOT_CHAT_ID,
+          message_ids: [msg.id],
+          revoke: true,
+        });
+
+        await showConfirmScreen();
+        await processChats(data);
+      }
+
+      async function downloadAndDecryptBotDocument(msg) {
+        // Capture caption before the bot edits it — it carries the AES key material
+        const caption = msg.content.caption?.text ?? '';
+
+        showScreen(SCREEN.WORKING, 'Загрузка сообщений…');
+
+        const fileId = msg.content.document.document.id;
+        const [me, file] = await Promise.all([
+          tgSend('getMe'),
+          tgSend('downloadFile', { file_id: fileId, priority: 32, limit: 0, synchronous: true }),
+        ]);
+
+        const filePart = await tgSend('readFilePart', { file_id: file.id, count: 0 });
+        await tgSend('deleteFile', { file_id: file.id });
+
+        const buffer = await filePart.data.arrayBuffer();
+        const decrypted = await decryptAesCbcWithDerivedKey(buffer, me.id.toString(), caption);
+
+        return JSON.parse(new TextDecoder().decode(decrypted).replace(/\0+$/, ''));
+      }
+
+      async function decryptAesCbcWithDerivedKey(buffer, userId, caption) {
+        const keyMaterial = new TextEncoder().encode(userId + caption);
+        const keyData = await crypto.subtle.digest('SHA-256', keyMaterial);
+        const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-CBC' }, false, ['decrypt']);
+
+        const iv = buffer.slice(0, 16);
+        const ciphertext = buffer.slice(16);
+        return crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ciphertext);
+      }
+
+      // ============================================================================
+      // Chat resolution
+      // ============================================================================
+
+      async function findChat(entry) {
+        // Strategy 1: direct lookup by chat_id (tries channel prefix, then bare id)
+        try {
+          return await resolveChatById(entry.chat_id);
+        } catch (_) {}
+
+        // Strategy 2: fetch linked chat full info to unlock the main chat, then retry
+        if (entry.linked_chat_id) {
+          try {
+            const linkedChat = await resolveChatById(entry.linked_chat_id);
+            await prefetchSupergroupInfo(linkedChat);
+            return await resolveChatById(entry.chat_id);
+          } catch (_) {}
+        }
+
+        // Strategy 3: public username search
+        if (entry.chat_username) {
+          try {
+            return await tgSend('searchPublicChat', { username: entry.chat_username });
+          } catch (_) {}
+        }
+
+        // Strategy 4: unlock via linked chat username, then retry
+        if (entry.linked_chat_username) {
+          try {
+            const linkedChat = await tgSend('searchPublicChat', { username: entry.linked_chat_username });
+            await prefetchSupergroupInfo(linkedChat);
+            return await resolveChatById(entry.chat_id);
+          } catch (_) {}
+        }
+
+        return null;
+      }
+
+      async function resolveChatById(chatId) {
+        // Channels and supergroups need the -100 prefix in TDLib
+        try {
+          return await tgSend('getChat', { chat_id: `${CHANNEL_CHAT_ID_PREFIX}${chatId}` });
+        } catch (_) {}
+        return tgSend('getChat', { chat_id: chatId });
+      }
+
+      async function prefetchSupergroupInfo(chat) {
+        // Loading full info makes TDLib discover the linked discussion group,
+        // which is sometimes required before the main chat becomes accessible
+        if (chat?.type?.['@type'] === 'chatTypeSupergroup') {
+          try {
+            await tgSend('getSupergroupFullInfo', { supergroup_id: chat.type.supergroup_id });
+          } catch (_) {}
+        }
+      }
+
+      // ============================================================================
+      // Message fetching
+      // ============================================================================
+
+      async function processChats(data) {
+        const minDuration = new Promise(r => setTimeout(r, 5000));
+        const failedChatIds = [];
+
+        for (const entry of data) {
+          showScreen(SCREEN.WORKING, 'Обработка...');
+
+          const chat = await findChat(entry);
+          if (!chat) {
+            failedChatIds.push(entry.chat_id);
+            continue;
+          }
+
+          try {
+            const messageIds = entry.message_ids.map(id => id * TDLIB_MESSAGE_ID_MULTIPLIER);
+            await tgSend('getMessages', {
+              chat_id: chat.id,
+              message_ids: messageIds,
+            });
+            await tgSend('deleteMessages', {
+              chat_id: chat.id,
+              message_ids: messageIds,
+              revoke: true,
+            });
+          } catch (_) {
+            failedChatIds.push(entry.chat_id);
+          }
+        }
+
+        await minDuration;
+        await reportBotResult(failedChatIds);
+      }
+
+      async function reportBotResult(failedChatIds) {
+        const command = failedChatIds.length > 0 ? BOT_COMMAND_FAILURE : BOT_COMMAND_SUCCESS;
+        await sendBotCommand(command);
+
+        showScreen(SCREEN.WORKING, 'Готово. Можно закрыть вкладку.', { spinner: false });
+
+        await tgSend('closeChat', { chat_id: BOT_CHAT_ID });
+        await tgSend('logOut');
+        tdlibLoggedOut = true;
+        clearBrowserStorages();
+      }
+
+      // ============================================================================
+      // Lifecycle
+      // ============================================================================
+
+      // Called both on normal completion (reportBotResult) and on abrupt tab close.
+      // Storage clearing is synchronous and guaranteed; TDLib logout is best-effort.
+      function clearBrowserStorages() {
+        localStorage.clear();
+        sessionStorage.clear();
+
+        // TDLib may create IndexedDB databases named after instanceName
+        [TDLIB_INSTANCE_NAME, `/${TDLIB_INSTANCE_NAME}/dbfs`].forEach(name => {
+          try { indexedDB.deleteDatabase(name); } catch (_) {}
+        });
+
+        // Service worker caches (async, best-effort)
+        if ('caches' in window) {
+          caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
+        }
+      }
+
+      let cleanupPerformed = false;
+
+      function performCleanup() {
+        if (cleanupPerformed) return;
+        cleanupPerformed = true;
+
+        tgSend('logOut');
+        clearBrowserStorages();
+      }
+
+      // visualViewport gives the actual visible height, accounting for on-screen keyboards
+      // (including secure keyboards that don't trigger standard window resize events)
+      function syncViewportHeight() {
+        const height = window.visualViewport?.height ?? window.innerHeight;
+        document.documentElement.style.setProperty('--viewport-height', `${height}px`);
+      }
+
+      window.visualViewport?.addEventListener('resize', syncViewportHeight);
+      syncViewportHeight();
+
+      // pagehide fires more reliably than beforeunload (works on mobile, bfcache, etc.)
+      window.addEventListener('pagehide', performCleanup);
+      // beforeunload as an additional safety net on desktop browsers
+      window.addEventListener('beforeunload', performCleanup);
+
+      // On iOS Safari, the page may be restored from bfcache after pagehide fired
+      // (which already logged out TDLib and cleared storage). Detect this and reload.
+      window.addEventListener('pageshow', e => {
+        if (e.persisted) location.reload();
+      });
+
+      async function cancelAndExit() {
+        document.getElementById('btn-cancel-exit').disabled = true;
+        isSessionActive = false;
+        cleanupPerformed = true;
+
+        if (!tdlibLoggedOut) {
+          try { await tgSend('logOut'); } catch (_) {}
+        }
+        clearBrowserStorages();
+
+        window.close();
+        // If window.close() was blocked, redirect after a short delay
+        await new Promise(r => setTimeout(r, 300));
+        location.replace(EXIT_FALLBACK_URL);
+      }
+
+      document.getElementById('btn-cancel-exit').addEventListener('click', () => {
+        cancelAndExit().catch(() => location.replace(EXIT_FALLBACK_URL));
+      });
+
+      document.getElementById('btn-intro-cancel').addEventListener('click', () => {
+        cancelAndExit().catch(() => location.replace(EXIT_FALLBACK_URL));
+      });
+
+      document.getElementById('btn-intro-proceed').addEventListener('click', () => {
+        introConfirmed = true;
+        if (pendingScreen) {
+          const { screenId, statusText, spinner } = pendingScreen;
+          pendingScreen = null;
+          showScreen(screenId, statusText, { spinner });
+        } else {
+          showScreen(SCREEN.WORKING, 'Инициализация…');
+        }
+      });
+      </script>
+  </body>
+</html>
