@@ -2,9 +2,10 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
-const { createReadStream, readFileSync, writeFileSync } = require('fs');
+const { createHash } = require('crypto');
+const { readFileSync, writeFileSync } = require('fs');
 const { resolve } = require('path');
-const { createGzip, gzipSync } = require('zlib');
+const { gzipSync, gunzipSync } = require('zlib');
 const S3 = require('aws-sdk/clients/s3');
 const mime = require('mime-types');
 
@@ -24,20 +25,32 @@ const STATIC_FILES = ['styles.css', 'tdweb.js', WASM, WORKER_MAIN, WORKER_CHUNK]
 const ROOT = resolve(__dirname, '..');
 
 // Upload a file from disk; returns its S3 VersionId.
-const uploadFile = (filename) => new Promise((res, rej) => {
-  const body = createReadStream(`${ROOT}/${filename}`).pipe(createGzip());
-  body.once('error', rej);
-  s3.upload({
-    Bucket: process.env.S3_BUCKET,
+// Downloads the current S3 object, decompresses it, and compares with local content.
+// Skips upload if content is identical; returns the existing VersionId in that case.
+const uploadFile = async (filename) => {
+  const localContent = readFileSync(`${ROOT}/${filename}`);
+  const bucket = process.env.S3_BUCKET;
+
+  try {
+    const obj = await s3.getObject({ Bucket: bucket, Key: filename }).promise();
+    if (gunzipSync(obj.Body).equals(localContent)) {
+      console.info(`Skipped:  ${filename}  (unchanged)`);
+      return null;
+    }
+  } catch (e) {
+    if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
+  }
+
+  const data = await s3.upload({
+    Bucket: bucket,
     Key: filename,
-    Body: body,
+    Body: gzipSync(localContent),
     ContentType: mime.lookup(filename) || 'application/octet-stream',
     ContentEncoding: 'gzip',
-  }).promise().then((data) => {
-    console.info(`Uploaded: ${filename}  →  ${data.VersionId}`);
-    res(data.VersionId);
-  }).catch(rej);
-});
+  }).promise();
+  console.info(`Uploaded: ${filename}  →  ${data.VersionId}`);
+  return data.VersionId;
+};
 
 // Upload an in-memory HTML string; returns S3 VersionId.
 const uploadHtml = (content, key) => new Promise((res, rej) => {
@@ -55,14 +68,26 @@ const uploadHtml = (content, key) => new Promise((res, rej) => {
 
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const computeIntegrity = (filename) => {
+  const hash = createHash('sha384').update(readFileSync(`${ROOT}/${filename}`)).digest('base64');
+  return `sha384-${hash}`;
+};
+
 // Patch index.html in memory: inject S3 VersionIds into asset URLs and worker mapping.
-// The source file is never modified; patching happens entirely in memory.
-const patchIndex = (html, { styles, tdweb, wasm, main, chunk }) => html
-  .replace(/src="tdweb\.js[^"]*"/,    `src="tdweb.js?versionId=${tdweb}"`)
-  .replace(/href="styles\.css[^"]*"/, `href="styles.css?versionId=${styles}"`)
-  .replace(/wasmUrl: '[^']*\.wasm[^']*'/, `wasmUrl: '${WASM}?versionId=${wasm}'`)
-  .replace(new RegExp(`'${escRe(WORKER_MAIN)}':\\s*(null|'[^']*')`),  `'${WORKER_MAIN}': '${main}'`)
-  .replace(new RegExp(`'${escRe(WORKER_CHUNK)}':\\s*(null|'[^']*')`), `'${WORKER_CHUNK}': '${chunk}'`);
+// null values mean the file was unchanged — leave its existing versionId in index.html as-is.
+const patchIndex = (html, { styles, tdweb, wasm, main, chunk, stylesIntegrity }) => {
+  if (tdweb !== null)
+    html = html.replace(/src="tdweb\.js[^"]*"/, `src="tdweb.js?versionId=${tdweb}"`);
+  if (styles !== null)
+    html = html.replace(/href="styles\.css[^"]*"\s+integrity="[^"]*"/, `href="styles.css?versionId=${styles}" integrity="${stylesIntegrity}"`);
+  if (wasm !== null)
+    html = html.replace(/wasmUrl: '[^']*\.wasm[^']*'/, `wasmUrl: '${WASM}?versionId=${wasm}'`);
+  if (main !== null)
+    html = html.replace(new RegExp(`'${escRe(WORKER_MAIN)}':\\s*(null|'[^']*')`),  `'${WORKER_MAIN}': '${main}'`);
+  if (chunk !== null)
+    html = html.replace(new RegExp(`'${escRe(WORKER_CHUNK)}':\\s*(null|'[^']*')`), `'${WORKER_CHUNK}': '${chunk}'`);
+  return html;
+};
 
 (async () => {
   try {
@@ -71,25 +96,46 @@ const patchIndex = (html, { styles, tdweb, wasm, main, chunk }) => html
       await Promise.all(STATIC_FILES.map(uploadFile));
 
     console.info('\nPatching and uploading index.html...');
+    const stylesIntegrity = styles !== null ? computeIntegrity('styles.css') : null;
     const html = readFileSync(`${ROOT}/index.html`, 'utf8');
-    const patched = patchIndex(html, { styles, tdweb, wasm, main, chunk });
-    writeFileSync(`${ROOT}/index.html`, patched, 'utf8');
-    console.info('Patched: index.html');
+    const patched = patchIndex(html, { styles, tdweb, wasm, main, chunk, stylesIntegrity });
 
-    const [, tVersionId] = await Promise.all([
-      uploadHtml(patched, 'index.html'),
-      uploadHtml(patched, 't'),
-    ]);
-
-    console.info('\nPatching README files...');
-    const patchReadme = (content) =>
-      content.replace(/\/t\.t\/t\?versionId=[^\s`'")\]]+/g, `/t.t/t?versionId=${tVersionId}`);
-    for (const name of ['README.md', 'README.ru.md']) {
-      const filePath = `${ROOT}/${name}`;
-      writeFileSync(filePath, patchReadme(readFileSync(filePath, 'utf8')), 'utf8');
-      console.info(`Patched: ${name}`);
+    // versionIds may be unchanged, but the HTML body itself could have changed — check S3.
+    let s3HtmlUnchanged = false;
+    if (patched === html) {
+      try {
+        const obj = await s3.getObject({ Bucket: process.env.S3_BUCKET, Key: 'index.html' }).promise();
+        s3HtmlUnchanged = gunzipSync(obj.Body).toString('utf8') === patched;
+      } catch (e) {
+        if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
+      }
     }
 
+    if (s3HtmlUnchanged) {
+      const tHead = await s3.headObject({ Bucket: process.env.S3_BUCKET, Key: 't' }).promise();
+      const tVersionId = tHead.VersionId;
+      console.info('Skipped:  index.html  (unchanged)');
+      console.info(`\nhttps://s3.amazonaws.com/${process.env.S3_BUCKET}/t?versionId=${tVersionId}`);
+    } else {
+      writeFileSync(`${ROOT}/index.html`, patched, 'utf8');
+      console.info('Patched: index.html');
+
+      const [, tVersionId] = await Promise.all([
+        uploadHtml(patched, 'index.html'),
+        uploadHtml(patched, 't'),
+      ]);
+
+      console.info('\nPatching README files...');
+      const patchReadme = (content) =>
+        content.replace(/\/t\.t\/t\?versionId=[^\s`'")\]]+/g, `/t.t/t?versionId=${tVersionId}`);
+      for (const name of ['README.md', 'README.ru.md']) {
+        const filePath = `${ROOT}/${name}`;
+        writeFileSync(filePath, patchReadme(readFileSync(filePath, 'utf8')), 'utf8');
+        console.info(`Patched: ${name}`);
+      }
+
+      console.info(`\nhttps://s3.amazonaws.com/${process.env.S3_BUCKET}/t?versionId=${tVersionId}`);
+    }
     console.info('\nDone.');
   } catch (e) {
     console.error(e.message);

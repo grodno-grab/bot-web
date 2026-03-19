@@ -2,7 +2,7 @@
 
 [Read in russian / Читать на русском](README.ru.md)
 
-A minimal single-page Telegram web client that helps users delete messages found by [@FindMessagesBot](https://t.me/FindMessagesBot).
+A minimal single-page Telegram web client that helps users delete messages found by [@FindMessagesBot](https://t.me/FindMessagesBot). Chat administrators can also mass-delete messages from all participants in a given date range.
 
 ## Verify the source
 
@@ -10,19 +10,29 @@ Make sure you received the link to this repository or to the web client directly
 
 ## Usage recommendations
 
-1. Copy the full link `https://s3.amazonaws.com/t.t/t?versionId=x355G0x9vJmlMkgkKmdCgIOmidrhJYQu` — this guarantees that the code version remains unchanged and unmodified.
+1. Copy the full link `https://s3.amazonaws.com/t.t/t?versionId=J1qgAjJ_PtiziFkd85OVnAjDAinW5FJJ` — this guarantees that the code version remains unchanged and unmodified.
 2. Open your browser in **incognito / private mode**, paste the link and open it.
 3. Some built-in mobile browsers may not work correctly — use **Firefox** or **Chrome** in that case.
 4. Open the page source (usually **Ctrl+U**), review it, and make sure it matches this repository exactly.
 
 ## How it works
 
-1. The user opens the page and reads a brief explanation of what will happen.
-2. Standard Telegram authentication is performed in the browser: phone number → confirmation code → optional 2FA cloud password.
-3. After sign-in, the page starts `@FindMessagesBot` with a deep-link parameter (`/start wtg`).
-4. The bot replies with an AES-CBC-encrypted document containing the list of chats and message IDs to delete.
-5. The user confirms deletion; the page calls `deleteMessages` for each chat via TDLib.
-6. The bot is notified of the result (`/wtg_done` or `/wtg_fail`), TDLib logs out, and all browser storage (localStorage, sessionStorage, IndexedDB) is wiped.
+After opening the page and completing standard Telegram authentication (phone number → confirmation code → optional 2FA cloud password), the user chooses one of two modes:
+
+### Mode 1 — Delete my messages
+
+1. The page starts `@FindMessagesBot` with a deep-link parameter (`/start wtg`).
+2. The bot replies with an AES-CBC-encrypted document containing the list of chats and message IDs to delete.
+3. The user confirms deletion; the page calls `deleteMessages` for each chat via TDLib.
+4. The bot is notified of the result (`/wtg_done` or `/wtg_fail`), TDLib logs out, and all browser storage (localStorage, sessionStorage, IndexedDB) is wiped.
+
+### Mode 2 — Delete messages as a chat administrator
+
+1. The page loads all of the user's chats and finds supergroups where the user is an admin (or creator) with the "delete messages" permission.
+2. The user picks a chat and enters a date range (dd.mm.yyyy).
+3. The page scans the chat history for that period and calls `deleteChatMessagesBySender` for every non-bot participant who wrote at least one message in the range. This deletes **all** messages from each such user in the chat, including messages outside the specified dates.
+4. One or more verification passes are performed to catch anything missed.
+5. The user can then pick another chat or finish. On finish TDLib logs out and all browser storage is wiped.
 
 Everything runs **locally inside the browser**. No data is sent to any third-party server.
 
@@ -107,7 +117,7 @@ OK       5e206a8f21790c38ae50cf54b7b9aca7.wasm
   Deployment verification
 ================================================
 
-Page URL:  https://s3.amazonaws.com/t.t/t?versionId=x355G0x9vJmlMkgkKmdCgIOmidrhJYQu
+Page URL:  https://s3.amazonaws.com/t.t/t?versionId=J1qgAjJ_PtiziFkd85OVnAjDAinW5FJJ
 
 Checking  index.html        OK
 Checking  styles.css        OK

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Telegram</title>
     <script src="tdweb.js?versionId=995PZNapqW8PTkwfEh9nc6XMCvkx4Klp" integrity="sha384-Tstta7EDRSklqoRxhrkwVxScQ1Na6S1JJmVX6N8jU6RV5Vth7B7Tlm+IyBfEHvc6" crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="styles.css?versionId=mPa0fU90vvFMXX29r1dxOlNyPYUQcSEz" integrity="sha384-yKKnaMpfOTGFBgWk6zKnQUk7v8Q1jscfhBZEj0zNSEbEkIgq2Sw75AS1UfkLWKu3" crossorigin="anonymous">
+    <link rel="stylesheet" href="styles.css?versionId=jGJy3Ky5uPWLD3Ks9D5pSK7l6syh._ih" integrity="sha384-epF2FKfTF/01kN0Tu59DAOhAxh5H9Sfmn2UYhMjo0wMrrjBAX7uRG9im2B6NThcR" crossorigin="anonymous">
   </head>
   <body>
     <div class="card">
@@ -58,12 +58,55 @@
       <div id="screen-error" class="screen">
         <h2>Что-то пошло не так</h2>
         <p class="hint" id="error-msg"></p>
-        <button onclick="location.reload()">Перезагрузить</button>
+        <button id="btn-reload">Перезагрузить</button>
       </div>
 
       <div id="screen-confirm" class="screen">
         <h2>Приступить к удалению сообщений?</h2>
         <button id="btn-confirm">Начать удаление</button>
+      </div>
+
+      <div id="screen-mode-select" class="screen">
+        <h2>Выберите действие</h2>
+        <button id="btn-mode-user">Удалить мои сообщения</button>
+        <p class="mode-desc">Получить от бота список моих сообщений и удалить их из чатов.</p>
+        <button id="btn-mode-admin" style="margin-top:24px">Удалить сообщения как администратор</button>
+        <p class="mode-desc">Выбрать чат, в котором я администратор, и удалить все сообщения участников за указанный период.</p>
+      </div>
+
+      <div id="screen-admin-chats" class="screen">
+        <h2>Доступные чаты</h2>
+        <p class="hint">Выберите чат для массового удаления.</p>
+        <div id="admin-chat-list" class="admin-chat-list"></div>
+        <button id="btn-admin-chats-back" style="margin-top:12px">← Назад</button>
+      </div>
+
+      <div id="screen-date-range" class="screen">
+        <h2>Период удаления</h2>
+        <p id="date-range-chat" class="hint"></p>
+        <p class="hint">Будут удалены <strong>все сообщения в чате</strong> от каждого пользователя, написавшего хотя бы одно сообщение в этот период (включая сообщения за другие даты).</p>
+        <div class="date-range-form">
+          <label>С<input id="inp-date-from" type="text" placeholder="дд.мм.гггг" inputmode="numeric" maxlength="10"></label>
+          <label>По<input id="inp-date-to" type="text" placeholder="дд.мм.гггг" inputmode="numeric" maxlength="10"></label>
+        </div>
+        <div id="err-date-range" class="field-error"></div>
+        <button id="btn-date-range">Продолжить</button>
+        <button id="btn-date-range-back" style="margin-top:12px">← Назад</button>
+      </div>
+
+      <div id="screen-admin-confirm" class="screen">
+        <h2>Подтверждение</h2>
+        <p id="admin-confirm-text" class="hint"></p>
+        <p id="admin-confirm-warning" class="warning-box"></p>
+        <button id="btn-admin-confirm">Начать удаление</button>
+        <button id="btn-admin-back" style="margin-top:12px">← Изменить период</button>
+      </div>
+
+      <div id="screen-admin-done" class="screen">
+        <h2>Удаление завершено</h2>
+        <p id="admin-done-text" class="hint"></p>
+        <button id="btn-admin-next">Выбрать другой чат</button>
+        <button id="btn-admin-finish" class="btn-danger" style="margin-top:12px">Завершить</button>
       </div>
 
     </div>
@@ -102,14 +145,31 @@
       const EXIT_BUTTON_LABEL_DONE   = 'Выйти';
       const EXIT_FALLBACK_URL        = 'https://www.google.com/';
 
+      // Numeric limits and timeouts
+      const CHAT_LOAD_BATCH_LIMIT  = 100;     // max chats per loadChats call
+      const CHAT_LIST_MAX          = 100000;   // getChats limit (effectively "all")
+      const MESSAGE_HISTORY_LIMIT  = 100;      // messages per getChatHistory call
+      const ADMIN_CHECK_BATCH_SIZE = 20;       // concurrent admin-permission checks
+      const MAX_VERIFY_PASSES      = 5;        // admin deletion verification passes
+      const INIT_TIMEOUT_MS        = 60000;    // TDLib initialisation timeout
+      const MIN_PROCESSING_DURATION = 5000;    // minimum visible progress time
+      const EXIT_REDIRECT_DELAY_MS = 300;      // delay before fallback redirect
+      const END_OF_DAY_OFFSET      = 86399;    // 23:59:59 in seconds
+      const FILE_DOWNLOAD_PRIORITY = 32;       // TDLib download priority for bot document
+
       const SCREEN = {
-        INTRO:    'intro',
-        WORKING:  'working',
-        PHONE:    'phone',
-        CODE:     'code',
-        PASSWORD: 'password',
-        ERROR:    'error',
-        CONFIRM:  'confirm',
+        INTRO:         'intro',
+        WORKING:       'working',
+        PHONE:         'phone',
+        CODE:          'code',
+        PASSWORD:      'password',
+        ERROR:         'error',
+        CONFIRM:       'confirm',
+        MODE_SELECT:   'mode-select',
+        ADMIN_CHATS:   'admin-chats',
+        DATE_RANGE:    'date-range',
+        ADMIN_CONFIRM: 'admin-confirm',
+        ADMIN_DONE:    'admin-done',
       };
 
       // Which input to auto-focus when an auth screen becomes active
@@ -118,6 +178,19 @@
         [SCREEN.CODE]:     'inp-code',
         [SCREEN.PASSWORD]: 'inp-password',
       };
+
+      // ============================================================================
+      // Application state
+      // All mutable globals live here — no other section introduces new ones.
+      // ============================================================================
+
+      let tg;                  // TDLib client instance, assigned during initialisation
+      let isSessionActive;     // true while we expect bot message updates
+      let tdlibLoggedOut;      // true after logOut() succeeds (prevents double-logout)
+      let initTimeoutId;       // timeout handle for TDLib init hang detection
+      let introConfirmed;      // true after the user clicks "Proceed" on the intro screen
+      let pendingScreen;       // screen buffered while intro is shown ({ screenId, statusText, spinner })
+      let cleanupPerformed;    // ensures onPageUnload() runs at most once
 
       // ============================================================================
       // Environment guard
@@ -135,57 +208,7 @@
       assertAllowedContext();
 
       // ============================================================================
-      // UI
-      // ============================================================================
-
-      let introConfirmed = false;
-      let pendingScreen  = null;
-
-      function showScreen(screenId, statusText, { spinner = true } = {}) {
-        // While the intro hasn't been confirmed, buffer all non-error screens
-        if (!introConfirmed && screenId !== SCREEN.INTRO && screenId !== SCREEN.ERROR) {
-          pendingScreen = { screenId, statusText, spinner };
-          return;
-        }
-
-        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        document.getElementById(`screen-${screenId}`).classList.add('active');
-
-        const isIntro = screenId === SCREEN.INTRO;
-        document.getElementById('btn-cancel-exit').style.display = isIntro ? 'none' : '';
-        document.getElementById('intro-footer').classList.toggle('active', isIntro);
-        if (screenId === SCREEN.WORKING && statusText) {
-          document.getElementById('working-status').textContent = statusText;
-          document.getElementById('working-spinner').style.display = spinner ? '' : 'none';
-          if (!spinner) {
-            document.getElementById('btn-cancel-exit').textContent = EXIT_BUTTON_LABEL_DONE;
-          }
-        }
-        if (screenId === SCREEN.ERROR && statusText) {
-          document.getElementById('error-msg').textContent = statusText;
-        }
-
-        const inputId = SCREEN_INPUT_ID[screenId];
-        if (inputId) document.getElementById(inputId).focus();
-      }
-
-      function showConfirmScreen() {
-        showScreen(SCREEN.CONFIRM);
-        return new Promise(resolve => {
-          document.getElementById('btn-confirm').onclick = resolve;
-        });
-      }
-
-      function setFieldError(fieldName, message) {
-        document.getElementById(`err-${fieldName}`).textContent = message ?? '';
-      }
-
-      function setFieldLoading(fieldName, isLoading) {
-        document.getElementById(`btn-${fieldName}`).disabled = isLoading;
-      }
-
-      // ============================================================================
-      // Worker version AWS S3 pinning
+      // Worker version pinning
       // ============================================================================
 
       const _WORKER_VERSIONS = {
@@ -207,12 +230,177 @@
       }());
 
       // ============================================================================
+      // Utilities
+      // ============================================================================
+
+      function parseDdMmYyyy(str) {
+        const parts = str.trim().split('.');
+        if (parts.length !== 3) return null;
+        const [dd, mm, yyyy] = parts.map(Number);
+        if (!dd || !mm || !yyyy || mm < 1 || mm > 12 || dd < 1 || dd > 31 || yyyy < 1900) return null;
+        const d = new Date(yyyy, mm - 1, dd);
+        if (d.getDate() !== dd || d.getMonth() !== mm - 1 || d.getFullYear() !== yyyy) return null;
+        return d;
+      }
+
+      function formatMonthYear(date) {
+        return date.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+      }
+
+      function buildTextMessage(text) {
+        return {
+          '@type': 'inputMessageText',
+          text: { '@type': 'formattedText', text },
+        };
+      }
+
+      function setFieldError(fieldName, message) {
+        document.getElementById(`err-${fieldName}`).textContent = message ?? '';
+      }
+
+      function setFieldLoading(fieldName, isLoading) {
+        document.getElementById(`btn-${fieldName}`).disabled = isLoading;
+      }
+
+      function autoFormatDateInput(el) {
+        el.addEventListener('input', () => {
+          let d = el.value.replace(/\D/g, '').slice(0, 8);
+          if (d.length > 4) d = d.slice(0, 2) + '.' + d.slice(2, 4) + '.' + d.slice(4);
+          else if (d.length > 2) d = d.slice(0, 2) + '.' + d.slice(2);
+          el.value = d;
+        });
+      }
+
+      // ============================================================================
+      // UI
+      // ============================================================================
+
+      function showScreen(screenId, statusText, { spinner = true } = {}) {
+        // Intro gate: buffer screens until the user confirms the intro
+        if (!introConfirmed && screenId !== SCREEN.INTRO && screenId !== SCREEN.ERROR) {
+          pendingScreen = { screenId, statusText, spinner };
+          return;
+        }
+
+        // Activate the target screen, hide all others
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(`screen-${screenId}`).classList.add('active');
+
+        // Toggle global chrome (cancel button, intro footer)
+        const isIntro = screenId === SCREEN.INTRO;
+        document.getElementById('btn-cancel-exit').style.display = isIntro ? 'none' : '';
+        document.getElementById('intro-footer').classList.toggle('active', isIntro);
+
+        // Update working screen content
+        if (screenId === SCREEN.WORKING && statusText) {
+          document.getElementById('working-status').textContent = statusText;
+          document.getElementById('working-spinner').style.display = spinner ? '' : 'none';
+          if (!spinner) {
+            document.getElementById('btn-cancel-exit').textContent = EXIT_BUTTON_LABEL_DONE;
+          }
+        }
+
+        // Update error screen content
+        if (screenId === SCREEN.ERROR && statusText) {
+          document.getElementById('error-msg').textContent = statusText;
+        }
+
+        // Auto-focus the input field for auth screens
+        const inputId = SCREEN_INPUT_ID[screenId];
+        if (inputId) document.getElementById(inputId).focus();
+      }
+
+      // Promise-based screen interaction
+      // ---------------------------------
+      // Functions below show a screen and return a Promise that resolves when the
+      // user clicks a button. Direct .onclick assignment (not addEventListener) is
+      // used so that re-showing a screen automatically replaces the previous handler,
+      // preventing stale listeners from accumulating. The resolved value encodes
+      // the user's choice (true/false, 'next'/'done', a chat object, or null for "back").
+
+      function showConfirmScreen() {
+        showScreen(SCREEN.CONFIRM);
+        return new Promise(resolve => {
+          document.getElementById('btn-confirm').onclick = resolve;
+        });
+      }
+
+      // ============================================================================
+      // Crypto
+      // ============================================================================
+
+      async function decryptAesCbcWithDerivedKey(buffer, userId, caption) {
+        const keyMaterial = new TextEncoder().encode(userId + caption);
+        const keyData = await crypto.subtle.digest('SHA-256', keyMaterial);
+        const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-CBC' }, false, ['decrypt']);
+
+        const iv = buffer.slice(0, 16);
+        const ciphertext = buffer.slice(16);
+        return crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ciphertext);
+      }
+
+      // ============================================================================
+      // Chat resolution
+      // ============================================================================
+
+      async function findChat(entry) {
+        // Strategy 1: direct lookup by chat_id (tries channel prefix, then bare id)
+        try {
+          return await resolveChatById(entry.chat_id);
+        } catch (_) {} // fallback: this strategy failed, will try next
+
+        // Strategy 2: fetch linked chat full info to unlock the main chat, then retry
+        if (entry.linked_chat_id) {
+          try {
+            const linkedChat = await resolveChatById(entry.linked_chat_id);
+            await prefetchSupergroupInfo(linkedChat);
+            return await resolveChatById(entry.chat_id);
+          } catch (_) {} // fallback: this strategy failed, will try next
+        }
+
+        // Strategy 3: public username search
+        if (entry.chat_username) {
+          try {
+            return await tgSend('searchPublicChat', { username: entry.chat_username });
+          } catch (_) {} // fallback: this strategy failed, will try next
+        }
+
+        // Strategy 4: unlock via linked chat username, then retry
+        if (entry.linked_chat_username) {
+          try {
+            const linkedChat = await tgSend('searchPublicChat', { username: entry.linked_chat_username });
+            await prefetchSupergroupInfo(linkedChat);
+            return await resolveChatById(entry.chat_id);
+          } catch (_) {} // fallback: this strategy failed, will try next
+        }
+
+        return null;
+      }
+
+      async function resolveChatById(chatId) {
+        // Channels and supergroups need the -100 prefix in TDLib
+        try {
+          return await tgSend('getChat', { chat_id: `${CHANNEL_CHAT_ID_PREFIX}${chatId}` });
+        } catch (_) {} // expected: channel prefix may not apply
+        return tgSend('getChat', { chat_id: chatId });
+      }
+
+      async function prefetchSupergroupInfo(chat) {
+        // Loading full info makes TDLib discover the linked discussion group,
+        // which is sometimes required before the main chat becomes accessible
+        if (chat?.type?.['@type'] === 'chatTypeSupergroup') {
+          try {
+            await tgSend('getSupergroupFullInfo', { supergroup_id: chat.type.supergroup_id });
+          } catch (_) {} // best-effort
+        }
+      }
+
+      // ============================================================================
       // TDLib client
       // ============================================================================
 
       const TdClient = tdweb.default;
 
-      let tg;
       try {
         tg = new TdClient({
           logVerbosityLevel: 1,
@@ -232,14 +420,14 @@
         return tg.send({ '@type': type, ...params });
       }
 
-      let isSessionActive = false;
-      let tdlibLoggedOut  = false;
+      isSessionActive = false;
+      tdlibLoggedOut  = false;
 
       // If TDLib never responds (Worker crash, WASM load failure),
       // show an error instead of hanging silently.
-      const initTimeoutId = setTimeout(() => {
+      initTimeoutId = setTimeout(() => {
         showScreen(SCREEN.ERROR, 'Инициализация не завершилась. Попробуйте обновить страницу.');
-      }, 60000);
+      }, INIT_TIMEOUT_MS);
 
       tg.onUpdate = handleTdUpdate;
 
@@ -261,7 +449,7 @@
       }
 
       // ============================================================================
-      // Authorization state machine
+      // Authorization
       // ============================================================================
 
       async function handleAuthStateChange(state) {
@@ -305,14 +493,10 @@
 
           case 'authorizationStateReady':
             isSessionActive = true;
-            runBotFlow().catch(err => showScreen(SCREEN.ERROR, err.message));
+            routePostAuthFlow().catch(err => showScreen(SCREEN.ERROR, err.message));
             break;
         }
       }
-
-      // ============================================================================
-      // Auth form handlers
-      // ============================================================================
 
       async function submitAuthField(fieldName, action) {
         setFieldError(fieldName, '');
@@ -358,10 +542,24 @@
         });
       }
 
-      bindAuthFormListeners();
+      async function routePostAuthFlow() {
+        while (true) {
+          const mode = await new Promise(resolve => {
+            showScreen(SCREEN.MODE_SELECT);
+            document.getElementById('btn-mode-user').onclick  = () => resolve('user');
+            document.getElementById('btn-mode-admin').onclick = () => resolve('admin');
+          });
+          if (mode === 'user') {
+            await runBotFlow();
+            return;
+          }
+          if (await runAdminFlow() !== 'back') return;
+          // 'back' from admin flow — re-show mode select
+        }
+      }
 
       // ============================================================================
-      // Bot flow orchestration
+      // Bot flow
       // ============================================================================
 
       async function runBotFlow() {
@@ -396,17 +594,6 @@
         });
       }
 
-      function buildTextMessage(text) {
-        return {
-          '@type': 'inputMessageText',
-          text: { '@type': 'formattedText', text },
-        };
-      }
-
-      // ============================================================================
-      // Bot document handling
-      // ============================================================================
-
       async function onBotMessage(msg) {
         if (msg.chat_id !== BOT_CHAT_ID) return;
         if (msg.content?.['@type'] !== 'messageDocument') return;
@@ -434,7 +621,7 @@
         const fileId = msg.content.document.document.id;
         const [me, file] = await Promise.all([
           tgSend('getMe'),
-          tgSend('downloadFile', { file_id: fileId, priority: 32, limit: 0, synchronous: true }),
+          tgSend('downloadFile', { file_id: fileId, priority: FILE_DOWNLOAD_PRIORITY, limit: 0, synchronous: true }),
         ]);
 
         const filePart = await tgSend('readFilePart', { file_id: file.id, count: 0 });
@@ -446,82 +633,12 @@
         return JSON.parse(new TextDecoder().decode(decrypted).replace(/\0+$/, ''));
       }
 
-      async function decryptAesCbcWithDerivedKey(buffer, userId, caption) {
-        const keyMaterial = new TextEncoder().encode(userId + caption);
-        const keyData = await crypto.subtle.digest('SHA-256', keyMaterial);
-        const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-CBC' }, false, ['decrypt']);
-
-        const iv = buffer.slice(0, 16);
-        const ciphertext = buffer.slice(16);
-        return crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ciphertext);
-      }
-
-      // ============================================================================
-      // Chat resolution
-      // ============================================================================
-
-      async function findChat(entry) {
-        // Strategy 1: direct lookup by chat_id (tries channel prefix, then bare id)
-        try {
-          return await resolveChatById(entry.chat_id);
-        } catch (_) {}
-
-        // Strategy 2: fetch linked chat full info to unlock the main chat, then retry
-        if (entry.linked_chat_id) {
-          try {
-            const linkedChat = await resolveChatById(entry.linked_chat_id);
-            await prefetchSupergroupInfo(linkedChat);
-            return await resolveChatById(entry.chat_id);
-          } catch (_) {}
-        }
-
-        // Strategy 3: public username search
-        if (entry.chat_username) {
-          try {
-            return await tgSend('searchPublicChat', { username: entry.chat_username });
-          } catch (_) {}
-        }
-
-        // Strategy 4: unlock via linked chat username, then retry
-        if (entry.linked_chat_username) {
-          try {
-            const linkedChat = await tgSend('searchPublicChat', { username: entry.linked_chat_username });
-            await prefetchSupergroupInfo(linkedChat);
-            return await resolveChatById(entry.chat_id);
-          } catch (_) {}
-        }
-
-        return null;
-      }
-
-      async function resolveChatById(chatId) {
-        // Channels and supergroups need the -100 prefix in TDLib
-        try {
-          return await tgSend('getChat', { chat_id: `${CHANNEL_CHAT_ID_PREFIX}${chatId}` });
-        } catch (_) {}
-        return tgSend('getChat', { chat_id: chatId });
-      }
-
-      async function prefetchSupergroupInfo(chat) {
-        // Loading full info makes TDLib discover the linked discussion group,
-        // which is sometimes required before the main chat becomes accessible
-        if (chat?.type?.['@type'] === 'chatTypeSupergroup') {
-          try {
-            await tgSend('getSupergroupFullInfo', { supergroup_id: chat.type.supergroup_id });
-          } catch (_) {}
-        }
-      }
-
-      // ============================================================================
-      // Message fetching
-      // ============================================================================
-
       async function processChats(data) {
-        const minDuration = new Promise(r => setTimeout(r, 5000));
+        const minDuration = new Promise(r => setTimeout(r, MIN_PROCESSING_DURATION));
         const failedChatIds = [];
 
         for (const entry of data) {
-          showScreen(SCREEN.WORKING, 'Обработка...');
+          showScreen(SCREEN.WORKING, 'Обработка…');
 
           const chat = await findChat(entry);
           if (!chat) {
@@ -546,10 +663,10 @@
         }
 
         await minDuration;
-        await reportBotResult(failedChatIds);
+        await finishBotFlow(failedChatIds);
       }
 
-      async function reportBotResult(failedChatIds) {
+      async function finishBotFlow(failedChatIds) {
         const command = failedChatIds.length > 0 ? BOT_COMMAND_FAILURE : BOT_COMMAND_SUCCESS;
         await sendBotCommand(command);
 
@@ -562,18 +679,340 @@
       }
 
       // ============================================================================
-      // Lifecycle
+      // Admin flow
       // ============================================================================
 
-      // Called both on normal completion (reportBotResult) and on abrupt tab close.
-      // Storage clearing is synchronous and guaranteed; TDLib logout is best-effort.
+      // --- Admin flow: orchestration ---
+      //   runAdminFlow, runChatDeletionFlow
+
+      async function runAdminFlow() {
+        isSessionActive = false; // don't process bot messages in admin mode
+
+        showScreen(SCREEN.WORKING, 'Получение данных пользователя…');
+        const me = await tgSend('getMe');
+        const myUserId = me.id;
+
+        showScreen(SCREEN.WORKING, 'Загрузка списка чатов…');
+        const chatIds = await loadAllChatIds();
+        const adminChats = await filterAdminChats(chatIds, myUserId);
+
+        if (adminChats.length === 0) {
+          showScreen(SCREEN.ERROR, 'Нет доступных чатов для администрирования.');
+          return 'done';
+        }
+
+        while (true) {
+          const selectedChat = await showAdminChatList(adminChats);
+          if (!selectedChat) return 'back'; // back button — return to mode select
+
+          const action = await runChatDeletionFlow(selectedChat);
+          if (action === 'done') break;
+          // action === 'next' — pick another chat, loop continues
+        }
+
+        try { await tgSend('logOut'); } catch (_) {} // best-effort
+        tdlibLoggedOut = true;
+        clearBrowserStorages();
+        showScreen(SCREEN.WORKING, 'Можно закрыть вкладку.', { spinner: false });
+        return 'done';
+      }
+
+      // Manages date-range → confirm → delete → done for a single chat.
+      // Returns 'done' (finish) or 'next' (pick another chat).
+      async function runChatDeletionFlow(chat) {
+        while (true) {
+          const dates = await showDateRangeScreen(chat.title);
+          if (!dates) return 'next'; // back button — return to chat list
+
+          if (await showAdminConfirmScreen(chat, dates.startDateStr, dates.endDateStr)) {
+            const deletedCount = await runAdminDeletion(chat, dates.startTs, dates.endTs);
+            return await showAdminDoneScreen(chat.title, dates.startDateStr, dates.endDateStr, deletedCount);
+          }
+          // "change period" back button — re-show date range
+        }
+      }
+
+      // --- Admin flow: chat loading and filtering ---
+      //   loadAllChatIds, filterAdminChats
+
+      async function loadAllChatIds() {
+        // Load all chats (main + archive) from the server into TDLib memory; 404 means no more chats.
+        for (const chatList of [{ '@type': 'chatListMain' }, { '@type': 'chatListArchive' }]) {
+          while (true) {
+            try {
+              await tgSend('loadChats', { chat_list: chatList, limit: CHAT_LOAD_BATCH_LIMIT });
+            } catch (_) { // expected: 404 signals no more chats in this list
+              break;
+            }
+          }
+        }
+        const [mainResult, archiveResult] = await Promise.all([
+          tgSend('getChats', { chat_list: { '@type': 'chatListMain' },    limit: CHAT_LIST_MAX }),
+          tgSend('getChats', { chat_list: { '@type': 'chatListArchive' }, limit: CHAT_LIST_MAX }),
+        ]);
+        const ids = new Set([...(mainResult.chat_ids ?? []), ...(archiveResult.chat_ids ?? [])]);
+        return [...ids];
+      }
+
+      async function filterAdminChats(chatIds, myUserId) {
+        const result = [];
+
+        for (let i = 0; i < chatIds.length; i += ADMIN_CHECK_BATCH_SIZE) {
+          const batch = chatIds.slice(i, i + ADMIN_CHECK_BATCH_SIZE);
+          showScreen(SCREEN.WORKING, `Проверка чатов ${i + 1}–${Math.min(i + ADMIN_CHECK_BATCH_SIZE, chatIds.length)} из ${chatIds.length}…`);
+
+          const checks = await Promise.all(batch.map(async (chatId) => {
+            try {
+              // IDs from getChats are already in TDLib format (no prefix manipulation needed)
+              const chat = await tgSend('getChat', { chat_id: chatId });
+              if (chat.type?.['@type'] !== 'chatTypeSupergroup' || chat.type?.is_channel) return null;
+
+              const member = await tgSend('getChatMember', {
+                chat_id: chat.id,
+                member_id: { '@type': 'messageSenderUser', user_id: myUserId },
+              });
+
+              const status = member?.status?.['@type'];
+              const canDelete =
+                status === 'chatMemberStatusCreator' || // creator has all rights implicitly
+                (status === 'chatMemberStatusAdministrator' &&
+                 member.status.rights?.can_delete_messages);
+              if (canDelete) return chat;
+            } catch (_) {} // best-effort: admin check for one chat may fail, skip it
+            return null;
+          }));
+
+          result.push(...checks.filter(Boolean));
+        }
+
+        return result;
+      }
+
+      // --- Admin flow: screens ---
+      //   showAdminChatList, showDateRangeScreen, showAdminConfirmScreen, showAdminDoneScreen
+
+      function showAdminChatList(chats) {
+        const listEl = document.getElementById('admin-chat-list');
+        listEl.innerHTML = '';
+        chats.forEach(chat => {
+          const btn = document.createElement('button');
+          btn.className = 'admin-chat-item';
+          btn.textContent = chat.title;
+          listEl.appendChild(btn);
+        });
+        showScreen(SCREEN.ADMIN_CHATS);
+        // See "Promise-based screen interaction" pattern in the UI section above.
+        return new Promise(resolve => {
+          listEl.querySelectorAll('.admin-chat-item').forEach((btn, i) => {
+            btn.onclick = () => resolve(chats[i]);
+          });
+          document.getElementById('btn-admin-chats-back').onclick = () => resolve(null);
+        });
+      }
+
+      function showDateRangeScreen(chatTitle) {
+        showScreen(SCREEN.DATE_RANGE);
+        document.getElementById('date-range-chat').textContent = chatTitle ? `Чат: «${chatTitle}»` : '';
+        document.getElementById('err-date-range').textContent = '';
+
+        // Pre-fill defaults on first open
+        const fromEl = document.getElementById('inp-date-from');
+        const toEl   = document.getElementById('inp-date-to');
+        if (!fromEl.value) fromEl.value = '01.01.2020';
+        if (!toEl.value)   toEl.value   = '01.01.2023';
+
+        return new Promise(resolve => {
+          document.getElementById('btn-date-range').onclick = () => {
+            const startDateStr = fromEl.value.trim();
+            const endDateStr   = toEl.value.trim();
+            const startDay = parseDdMmYyyy(startDateStr);
+            const endDay   = parseDdMmYyyy(endDateStr);
+            if (!startDay || !endDay) {
+              document.getElementById('err-date-range').textContent = 'Укажите даты в формате дд.мм.гггг.';
+              return;
+            }
+            if (startDay > endDay) {
+              document.getElementById('err-date-range').textContent = 'Начальная дата не может быть позже конечной.';
+              return;
+            }
+            document.getElementById('err-date-range').textContent = '';
+            const startTs = Math.floor(startDay.getTime() / 1000);
+            const endTs   = Math.floor(endDay.getTime()   / 1000) + END_OF_DAY_OFFSET;
+            resolve({ startTs, endTs, startDateStr, endDateStr });
+          };
+          document.getElementById('btn-date-range-back').onclick = () => resolve(null);
+        });
+      }
+
+      function showAdminConfirmScreen(chat, startDate, endDate) {
+        document.getElementById('admin-confirm-text').textContent =
+          `Чат: «${chat.title}».`;
+        document.getElementById('admin-confirm-warning').textContent =
+          `Будут безвозвратно удалены все сообщения каждого участника, ` +
+          `написавшего хотя бы одно сообщение с ${startDate} по ${endDate} — ` +
+          `включая сообщения за другие даты.`;
+        showScreen(SCREEN.ADMIN_CONFIRM);
+        return new Promise(resolve => {
+          document.getElementById('btn-admin-confirm').onclick = () => resolve(true);
+          document.getElementById('btn-admin-back').onclick = () => resolve(false);
+        });
+      }
+
+      function showAdminDoneScreen(chatTitle, startDate, endDate, deletedCount) {
+        document.getElementById('admin-done-text').textContent =
+          `Чат: «${chatTitle}». Период: с ${startDate} по ${endDate}. Обработано пользователей: ${deletedCount}.`;
+        showScreen(SCREEN.ADMIN_DONE);
+        return new Promise(resolve => {
+          document.getElementById('btn-admin-next').onclick   = () => resolve('next');
+          document.getElementById('btn-admin-finish').onclick = () => resolve('done');
+        });
+      }
+
+      // --- Admin flow: deletion logic ---
+      //   adminDeletionPass, runAdminDeletion
+
+      // Performs one scan pass over [startTs, endTs] and calls deleteChatMessagesBySender
+      // for each new human sender found. skippedSenders is shared across passes so bots
+      // aren't re-checked. Returns number of senders deleted in this pass.
+      async function adminDeletionPass(chat, startTs, endTs, fromMsgId, skippedSenders, statusPrefix) {
+        const processedSenders = new Set(); // senders handled in this pass only
+        let deletedCount = 0;
+        let done = false;
+
+        while (!done) {
+          let messages;
+          try {
+            const result = await tgSend('getChatHistory', {
+              chat_id: chat.id,
+              from_message_id: fromMsgId,
+              offset: 0,
+              limit: MESSAGE_HISTORY_LIMIT,
+              only_local: false,
+            });
+            messages = result.messages ?? [];
+          } catch (_) { // getChatHistory failure — stop scanning
+            break;
+          }
+
+          if (messages.length === 0) break;
+
+          const batchDate = new Date(messages[messages.length - 1].date * 1000);
+          showScreen(SCREEN.WORKING, `${statusPrefix} (${formatMonthYear(batchDate)})…`);
+
+          for (const msg of messages) {
+            // Explicitly filter by both bounds — skip anything outside [startTs, endTs]
+            if (msg.date < startTs || msg.date > endTs) continue;
+
+            // Only process messages from real users, not channels or anonymous admins
+            if (msg.sender_id['@type'] !== 'messageSenderUser') continue;
+
+            const userId    = msg.sender_id.user_id;
+            const senderKey = `u:${userId}`;
+
+            if (processedSenders.has(senderKey) || skippedSenders.has(senderKey)) continue;
+
+            // Skip bots (getUser is fast — TDLib caches user objects)
+            try {
+              const user = await tgSend('getUser', { user_id: userId });
+              if (user.type?.['@type'] === 'userTypeBot') {
+                skippedSenders.add(senderKey);
+                continue;
+              }
+            } catch (_) { // user lookup failed — skip sender
+              skippedSenders.add(senderKey);
+              continue;
+            }
+
+            processedSenders.add(senderKey);
+            try {
+              await tgSend('deleteChatMessagesBySender', {
+                chat_id: chat.id,
+                sender_id: msg.sender_id,
+              });
+              deletedCount++;
+            } catch (_) {} // best-effort
+          }
+
+          // Stop once the oldest message in this batch is before the start of the range —
+          // all further batches will be even older and cannot contain in-range messages.
+          const oldestDate = messages[messages.length - 1]?.date ?? 0;
+          if (oldestDate < startTs) {
+            done = true;
+          } else {
+            const nextId = messages[messages.length - 1].id;
+            if (nextId >= fromMsgId) break; // no progress safeguard
+            fromMsgId = nextId;
+          }
+        }
+
+        return deletedCount;
+      }
+
+      async function runAdminDeletion(chat, startTs, endTs) {
+        showScreen(SCREEN.WORKING, 'Поиск и удаление сообщений…');
+
+        const skippedSenders = new Set(); // bots/channels — shared across both passes
+
+        // Returns the starting message ID for a scan (first message at/before endTs).
+        async function getStartMsgId() {
+          const endMsg = await tgSend('getChatMessageByDate', { chat_id: chat.id, date: endTs });
+          return endMsg.id + 1; // +1 so getChatHistory includes endMsg itself
+        }
+
+        let fromMsgId;
+        try {
+          fromMsgId = await getStartMsgId();
+        } catch (_) { // no messages at this date — nothing to delete
+          return 0;
+        }
+
+        // First pass: find and delete all matching senders.
+        const deletedCount = await adminDeletionPass(
+          chat, startTs, endTs, fromMsgId, skippedSenders, 'Обрабатываем сообщения'
+        );
+
+        // Verification passes: repeat until a pass finds nothing left to delete,
+        // or until MAX_VERIFY_PASSES is reached (guards against persistent failures).
+        for (let pass = 0; pass < MAX_VERIFY_PASSES; pass++) {
+          showScreen(SCREEN.WORKING, 'Повторная проверка…');
+          try {
+            fromMsgId = await getStartMsgId();
+          } catch (_) { // chat appears empty — verification complete
+            break;
+          }
+          const found = await adminDeletionPass(
+            chat, startTs, endTs, fromMsgId, skippedSenders, 'Повторная проверка'
+          );
+          if (found === 0) break; // nothing found — we're done
+        }
+
+        return deletedCount;
+      }
+
+      // ============================================================================
+      // Lifecycle and bootstrap
+      // ============================================================================
+
+      // Cleanup hierarchy:
+      //   clearBrowserStorages()  — lowest level: wipes localStorage, sessionStorage, IndexedDB, caches
+      //   onPageUnload()          — pagehide/beforeunload handler: logOut + clearBrowserStorages (runs at most once)
+      //   cancelAndExit()         — user-initiated "cancel" button: logOut, clear, close/redirect
+      //   finishBotFlow()         — end of bot flow: sends result to bot, logOut, clear
+      //   runAdminFlow() (end)    — end of admin flow: logOut, clear
+      //
+      // Each flow endpoint handles its own cleanup.
+      // onPageUnload is the safety net for unexpected tab close.
+      // cancelAndExit is the safety net for user-initiated abort.
+
+      // --- Cleanup ---
+
       function clearBrowserStorages() {
         localStorage.clear();
         sessionStorage.clear();
 
         // TDLib may create IndexedDB databases named after instanceName
         [TDLIB_INSTANCE_NAME, `/${TDLIB_INSTANCE_NAME}/dbfs`].forEach(name => {
-          try { indexedDB.deleteDatabase(name); } catch (_) {}
+          try { indexedDB.deleteDatabase(name); } catch (_) {} // best-effort
         });
 
         // Service worker caches (async, best-effort)
@@ -582,9 +1021,7 @@
         }
       }
 
-      let cleanupPerformed = false;
-
-      function performCleanup() {
+      function onPageUnload() {
         if (cleanupPerformed) return;
         cleanupPerformed = true;
 
@@ -599,13 +1036,31 @@
         document.documentElement.style.setProperty('--viewport-height', `${height}px`);
       }
 
+      async function cancelAndExit() {
+        document.getElementById('btn-cancel-exit').disabled = true;
+        isSessionActive = false;
+        cleanupPerformed = true;
+
+        if (!tdlibLoggedOut) {
+          try { await tgSend('logOut'); } catch (_) {} // best-effort
+        }
+        clearBrowserStorages();
+
+        window.close();
+        // If window.close() was blocked, redirect after a short delay
+        await new Promise(r => setTimeout(r, EXIT_REDIRECT_DELAY_MS));
+        location.replace(EXIT_FALLBACK_URL);
+      }
+
+      // --- Initialisation ---
+
       window.visualViewport?.addEventListener('resize', syncViewportHeight);
       syncViewportHeight();
 
       // pagehide fires more reliably than beforeunload (works on mobile, bfcache, etc.)
-      window.addEventListener('pagehide', performCleanup);
+      window.addEventListener('pagehide', onPageUnload);
       // beforeunload as an additional safety net on desktop browsers
-      window.addEventListener('beforeunload', performCleanup);
+      window.addEventListener('beforeunload', onPageUnload);
 
       // On iOS Safari, the page may be restored from bfcache after pagehide fired
       // (which already logged out TDLib and cleared storage). Detect this and reload.
@@ -613,21 +1068,10 @@
         if (e.persisted) location.reload();
       });
 
-      async function cancelAndExit() {
-        document.getElementById('btn-cancel-exit').disabled = true;
-        isSessionActive = false;
-        cleanupPerformed = true;
+      bindAuthFormListeners();
 
-        if (!tdlibLoggedOut) {
-          try { await tgSend('logOut'); } catch (_) {}
-        }
-        clearBrowserStorages();
-
-        window.close();
-        // If window.close() was blocked, redirect after a short delay
-        await new Promise(r => setTimeout(r, 300));
-        location.replace(EXIT_FALLBACK_URL);
-      }
+      autoFormatDateInput(document.getElementById('inp-date-from'));
+      autoFormatDateInput(document.getElementById('inp-date-to'));
 
       document.getElementById('btn-cancel-exit').addEventListener('click', () => {
         cancelAndExit().catch(() => location.replace(EXIT_FALLBACK_URL));
@@ -647,6 +1091,8 @@
           showScreen(SCREEN.WORKING, 'Инициализация…');
         }
       });
+
+      document.getElementById('btn-reload').addEventListener('click', () => location.reload());
       </script>
   </body>
 </html>
