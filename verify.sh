@@ -35,11 +35,11 @@ printf '  TDLib commit: af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249\n'
 printf '  Emscripten:   3.1.1\n'
 printf '================================================\n\n'
 
-# Fixed filename
-check "tdweb.js"
+# Single inlined bundle (workers are embedded)
+check "tdweb.inlined.js"
 
-# Content-hash filenames — iterate over reference dir
-for f in "$REF"/*.worker.js "$REF"/*.wasm; do
+# WASM file (content-hash filename) — iterate over reference dir
+for f in "$REF"/*.wasm; do
   [ -f "$f" ] || continue
   check "$(basename "$f")"
 done
@@ -65,18 +65,22 @@ sha256u() {  # download URL → gunzip → sha256
   rm -f "$_tmp"
 }
 
+gunzipu() {  # download URL → gunzip → file
+  curl -sfL "$1" | gunzip > "$2" 2>/dev/null
+}
+
 check_url() {
   label="$1"; url="$2"; file="$3"
   printf 'Checking  %s\n          %s\n' "$label" "$url"
-  h_r=$(sha256u "$url")
-  if [ -z "$h_r" ]; then
+  h_remote=$(sha256u "$url")
+  if [ -z "$h_remote" ]; then
     printf '  ERROR   download/decompress failed\n\n'; fail=$((fail+1)); return
   fi
-  h_l=$(sha256f "$file")
-  if [ "$h_r" = "$h_l" ]; then
-    printf '  OK      %s\n\n' "$h_r"; ok=$((ok+1))
+  h_local=$(sha256f "$file")
+  if [ "$h_remote" = "$h_local" ]; then
+    printf '  OK      %s\n\n' "$h_remote"; ok=$((ok+1))
   else
-    printf '  MISMATCH\n  remote: %s\n  local:  %s\n\n' "$h_r" "$h_l"; fail=$((fail+1))
+    printf '  MISMATCH\n  remote: %s\n  local:  %s\n\n' "$h_remote" "$h_local"; fail=$((fail+1))
   fi
 }
 
@@ -93,16 +97,32 @@ if [ -z "$page_url" ]; then
 else
   printf 'Page URL:  %s\n\n' "$page_url"
 
-  # Download and decompress the live page
-  html=$(mktemp); trap 'rm -f "$html"' EXIT
-  curl -sfL "$page_url" | gunzip > "$html" 2>/dev/null
+  # ---- boot.html (the 't' key) ----
+  boot=$(mktemp); trap 'rm -f "$boot" "$html" "$gg_sig_file" "$cp_sig_file"' EXIT
+  gunzipu "$page_url" "$boot"
 
-  if [ ! -s "$html" ]; then
-    printf 'ERROR: Failed to download or decompress page\n'
+  if [ ! -s "$boot" ]; then
+    printf 'ERROR: Failed to download or decompress boot.html\n'
     fail=$((fail+1))
   else
-    # index.html
-    printf 'Checking  index.html\n          %s\n' "$page_url"
+    printf 'Checking  boot.html (t key)\n          %s\n' "$page_url"
+    h_live=$(sha256f "$boot"); h_local=$(sha256f /reference/boot.html)
+    if [ "$h_live" = "$h_local" ]; then
+      printf '  OK      %s\n\n' "$h_live"; ok=$((ok+1))
+    else
+      printf '  MISMATCH\n  remote: %s\n  local:  %s\n\n' "$h_live" "$h_local"; fail=$((fail+1))
+    fi
+  fi
+
+  # ---- index.html (fetched without versionId, same as boot.html does) ----
+  html=$(mktemp)
+  gunzipu "${BASE}/index.html" "$html"
+
+  if [ ! -s "$html" ]; then
+    printf 'ERROR: Failed to download or decompress index.html\n'
+    fail=$((fail+1))
+  else
+    printf 'Checking  index.html\n          %s/index.html\n' "$BASE"
     h_live=$(sha256f "$html"); h_local=$(sha256f /reference/index.html)
     if [ "$h_live" = "$h_local" ]; then
       printf '  OK      %s\n\n' "$h_live"; ok=$((ok+1))
@@ -118,37 +138,75 @@ else
       printf 'Checking  styles.css\n  ERROR   versionId not found in page\n\n'; fail=$((fail+1))
     fi
 
-    # tdweb.js
-    ver=$(grep -oE 'src="tdweb\.js\?versionId=[^"]+' "$html" | sed 's/.*versionId=//')
+    # tdweb.inlined.js (workers embedded)
+    ver=$(grep -oE 'src="tdweb\.inlined\.js\?versionId=[^"]+' "$html" | sed 's/.*versionId=//')
     if [ -n "$ver" ]; then
-      check_url "tdweb.js" "${BASE}/tdweb.js?versionId=${ver}" /reference/tdweb.js
+      check_url "tdweb.inlined.js" "${BASE}/tdweb.inlined.js?versionId=${ver}" /reference/tdweb.inlined.js
     else
-      printf 'Checking  tdweb.js\n  ERROR   versionId not found in page\n\n'; fail=$((fail+1))
+      printf 'Checking  tdweb.inlined.js\n  ERROR   versionId not found in page\n\n'; fail=$((fail+1))
     fi
 
-    # workers: 'FILENAME.worker.js': 'VERSIONID'
-    for f in /reference/*.worker.js; do
-      [ -f "$f" ] || continue
-      name=$(basename "$f")
-      escaped=$(printf '%s' "$name" | sed 's/\./\\./g')
-      ver=$(grep -oE "'${escaped}'[[:space:]]*:[[:space:]]*'[^']+" "$html" \
-            | sed "s/.*'[[:space:]]*:[[:space:]]*'//")
-      if [ -n "$ver" ]; then
-        check_url "$name" "${BASE}/${name}?versionId=${ver}" "$f"
-      else
-        printf 'Checking  %s\n  ERROR   versionId not found in page\n\n' "$name"; fail=$((fail+1))
-      fi
-    done
-
-    # wasm: wasmUrl: 'HASH.wasm?versionId=...'
-    wasm_ref=$(grep -oE '[0-9a-f]{32}\.wasm\?versionId=[^'"'"']+' "$html" | head -1)
+    # wasm: wasmUrl: 'tdlib.wasm?versionId=...'
+    wasm_ref=$(grep -oE 'tdlib\.wasm\?versionId=[^'"'"']+' "$html" | head -1)
     if [ -n "$wasm_ref" ]; then
-      wasm_name=$(printf '%s' "$wasm_ref" | sed 's/?.*//')
       ver=$(printf '%s' "$wasm_ref" | sed 's/.*versionId=//')
-      check_url "$wasm_name" "${BASE}/${wasm_name}?versionId=${ver}" "/reference/${wasm_name}"
+      check_url "tdlib.wasm" "${BASE}/tdlib.wasm?versionId=${ver}" "/reference/tdlib.wasm"
     else
       printf 'Checking  *.wasm\n  ERROR   versionId not found in page\n\n'; fail=$((fail+1))
     fi
+  fi
+
+  # ---- Ed25519 signature verification ----
+  gg_sig_file=$(mktemp)  # GG = Grodno Grab
+  cp_sig_file=$(mktemp)  # CP = Cyberpartisans
+  gunzipu "${BASE}/index.gg.sig" "$gg_sig_file"
+  gunzipu "${BASE}/index.cp.sig" "$cp_sig_file"
+
+  if [ ! -s "$gg_sig_file" ] || [ ! -s "$cp_sig_file" ]; then
+    [ ! -s "$gg_sig_file" ] && printf 'Checking  index.gg.sig\n  ERROR   download/decompress failed\n\n' && fail=$((fail+1))
+    [ ! -s "$cp_sig_file" ] && printf 'Checking  index.cp.sig\n  ERROR   download/decompress failed\n\n' && fail=$((fail+1))
+  elif [ ! -s "$html" ]; then
+    printf 'Checking  signatures\n  ERROR   index.html not available for verification\n\n'
+    fail=$((fail+2))
+  else
+    # Extract public keys from boot.html
+    gg_pub_b64=$(grep 'GRODNO_GRAB_PK' /reference/boot.html \
+                 | grep -oE "'[A-Za-z0-9+/=]{40,}'" | tr -d "'")
+    cp_pub_b64=$(grep 'CYBERPARTISANS_PK' /reference/boot.html \
+                 | grep -oE "'[A-Za-z0-9+/=]{40,}'" | tr -d "'")
+
+    # Read signatures from downloaded files
+    gg_sig_b64=$(cat "$gg_sig_file")
+    cp_sig_b64=$(cat "$cp_sig_file")
+
+    # ECDSA P-256 signature verification (IEEE P1363 format, r||s 64 bytes).
+    # Public key: raw 65-byte uncompressed point (base64), wrapped in SPKI DER at runtime.
+    # Uses Node.js instead of openssl CLI: openssl cannot verify P-256 in IEEE P1363
+    # (raw r||s) format without extra conversion tooling. Node's crypto module handles
+    # it natively. Node is already present in the container as a webpack dependency.
+    ecdsa_p256_verify() {
+      _label="$1"; _pub_b64="$2"; _sig_b64="$3"; _content="$4"
+      printf 'Checking  %s signature\n' "$_label"
+      if PUB_B64="$_pub_b64" SIG_B64="$_sig_b64" CONTENT="$_content" \
+         node -e "
+           const {createPublicKey, verify} = require('crypto');
+           const {readFileSync} = require('fs');
+           const PREFIX = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
+           const rawKey = Buffer.from(process.env.PUB_B64, 'base64');
+           const pub = createPublicKey({key: Buffer.concat([PREFIX, rawKey]), format:'der', type:'spki'});
+           const sig = Buffer.from(process.env.SIG_B64, 'base64');
+           const ok = verify('sha256', readFileSync(process.env.CONTENT),
+                             {key: pub, dsaEncoding: 'ieee-p1363'}, sig);
+           process.exit(ok ? 0 : 1);
+         " 2>/dev/null; then
+        printf '  OK\n\n'; ok=$((ok+1))
+      else
+        printf '  FAILED\n\n'; fail=$((fail+1))
+      fi
+    }
+
+    ecdsa_p256_verify "Grodno Grab"    "$gg_pub_b64" "$gg_sig_b64" "$html"
+    ecdsa_p256_verify "Cyberpartisans" "$cp_pub_b64" "$cp_sig_b64" "$html"
   fi
 fi
 

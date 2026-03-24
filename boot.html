@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Загрузка…</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #loading {
+        color: #555;
+        font-size: 16px;
+      }
+      #error {
+        display: none;
+        background: #b00020;
+        color: #fff;
+        min-height: 100vh;
+        width: 100%;
+        padding: 40px 24px;
+        text-align: center;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 20px;
+      }
+      #error.visible {
+        display: flex;
+      }
+      #error h1 {
+        font-size: clamp(20px, 5vw, 32px);
+        font-weight: 700;
+        line-height: 1.3;
+      }
+      #error p {
+        font-size: clamp(14px, 3vw, 18px);
+        max-width: 540px;
+        opacity: 0.92;
+        line-height: 1.6;
+      }
+      #error-detail {
+        font-size: 13px;
+        opacity: 0.7;
+        font-family: monospace;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">Проверка подписи…</div>
+    <div id="error">
+      <h1>⚠ ПОДПИСЬ НЕ ПРОШЛА ПРОВЕРКУ</h1>
+      <p>Страница была изменена или подделана.</p>
+      <p id="error-detail"></p>
+    </div>
+    <script>
+      // ---- Public keys (ECDSA P-256, raw 65-byte uncompressed point in base64) ----
+      const GRODNO_GRAB_PK    = 'BGMalwYZpIChTpTzI+4yLU5T9Lop0ua9j3pNQc51dHae7ODAeqpCdI8Y/9xfvyPngo9TBr3O7rToyEsXkf/z8Oo='; // TODO: leave link where the key is posted
+      const CYBERPARTISANS_PK = 'BGMalwYZpIChTpTzI+4yLU5T9Lop0ua9j3pNQc51dHae7ODAeqpCdI8Y/9xfvyPngo9TBr3O7rToyEsXkf/z8Oo='; // TODO: replace and leave a link where the key is posted
+
+      const INDEX_URL  = 'https://s3.amazonaws.com/t.t/index.html';
+      const GG_SIG_URL = 'https://s3.amazonaws.com/t.t/index.gg.sig';
+      const CP_SIG_URL = 'https://s3.amazonaws.com/t.t/index.cp.sig';
+
+      function b64ToBytes(b64) {
+        return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      }
+
+      // ECDSA P-256 SubjectPublicKeyInfo DER prefix (26 bytes)
+      const SPKI_P256 = Uint8Array.from([
+        0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,
+        0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00
+      ]);
+
+      async function verify(pubB64, sigB64, contentBytes) {
+        const raw = b64ToBytes(pubB64); // 65-byte uncompressed point
+        const spki = new Uint8Array(SPKI_P256.length + raw.length);
+        spki.set(SPKI_P256);
+        spki.set(raw, SPKI_P256.length);
+        const key = await crypto.subtle.importKey(
+          'spki', spki.buffer,
+          { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
+        );
+        return crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          key, b64ToBytes(sigB64.trim()), contentBytes
+        );
+      }
+
+      function showError(detail) {
+        document.getElementById('loading').style.display = 'none';
+        const el = document.getElementById('error');
+        el.classList.add('visible');
+        document.getElementById('error-detail').textContent = detail;
+      }
+
+      async function main() {
+        if (window.self !== window.top) {
+          document.body.innerHTML = '';
+          return;
+        }
+
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 30000);
+
+        try {
+          const [htmlRes, ggSigRes, cpSigRes] = await Promise.all([
+            fetch(INDEX_URL,  { cache: 'no-store', signal: ctrl.signal }),
+            fetch(GG_SIG_URL, { cache: 'no-store', signal: ctrl.signal }),
+            fetch(CP_SIG_URL, { cache: 'no-store', signal: ctrl.signal }),
+          ]);
+          clearTimeout(timer);
+
+          if (!htmlRes.ok)   { showError('Не удалось загрузить index.html (HTTP ' + htmlRes.status + ')'); return; }
+          if (!ggSigRes.ok)  { showError('Не удалось загрузить index.gg.sig (HTTP ' + ggSigRes.status + ')'); return; }
+          if (!cpSigRes.ok)  { showError('Не удалось загрузить index.cp.sig (HTTP ' + cpSigRes.status + ')'); return; }
+
+          const html  = await htmlRes.text();
+          const ggSig = await ggSigRes.text();
+          const cpSig = await cpSigRes.text();
+
+          const content = new TextEncoder().encode(html);
+
+          const [ggOk, cpOk] = await Promise.all([
+            verify(GRODNO_GRAB_PK,    ggSig, content),
+            verify(CYBERPARTISANS_PK, cpSig, content),
+          ]);
+
+          if (!ggOk) { showError('Подпись Grodno Grab не прошла проверку.'); return; }
+          if (!cpOk) { showError('Подпись Cyberpartisans не прошла проверку.'); return; }
+
+          document.open();
+          document.write(html);
+          document.close();
+
+        } catch (e) {
+          clearTimeout(timer);
+          const msg = e.name === 'AbortError'
+            ? 'Превышено время ожидания сервера.'
+            : 'Ошибка: ' + e.message;
+          showError(msg);
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>

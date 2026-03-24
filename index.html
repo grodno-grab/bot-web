@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Telegram</title>
-    <script src="tdweb.js?versionId=995PZNapqW8PTkwfEh9nc6XMCvkx4Klp" integrity="sha384-Tstta7EDRSklqoRxhrkwVxScQ1Na6S1JJmVX6N8jU6RV5Vth7B7Tlm+IyBfEHvc6" crossorigin="anonymous"></script>
+    <script src="tdweb.inlined.js?versionId=HiU3ZUmc1UsyNRduDvmVDDU7Y20bdIbQ" integrity="sha384-f5d5g7D3VIrnFi24hgzkimYo1NVftRmi4QkQX4ERjrWkbL4qpElSCMCGgPmwJupH" crossorigin="anonymous"></script>
     <link rel="stylesheet" href="styles.css?versionId=jGJy3Ky5uPWLD3Ks9D5pSK7l6syh._ih" integrity="sha384-epF2FKfTF/01kN0Tu59DAOhAxh5H9Sfmn2UYhMjo0wMrrjBAX7uRG9im2B6NThcR" crossorigin="anonymous">
   </head>
   <body>
@@ -208,28 +208,6 @@
       assertAllowedContext();
 
       // ============================================================================
-      // Worker version pinning
-      // ============================================================================
-
-      const _WORKER_VERSIONS = {
-        'ce70fb8f3c7a4342d115.worker.js': 'hF1ThyLVpURearHDujgoENqAaxVDSKx4',
-        '1.ce70fb8f3c7a4342d115.worker.js': 'E8_4oaDIoUyPkd9L5foY7wgZrC43X6vz',
-      };
-
-      (function() {
-        const NativeWorker = window.Worker;
-        window.Worker = function(url, opts) {
-          if (typeof url === 'string') {
-            const base = url.split('/').pop().split('?')[0];
-            const ver = _WORKER_VERSIONS[base];
-            if (ver) url = url.split('?')[0] + '?versionId=' + ver;
-          }
-          return new NativeWorker(url, opts);
-        };
-        window.Worker.prototype = NativeWorker.prototype;
-      }());
-
-      // ============================================================================
       // Utilities
       // ============================================================================
 
@@ -409,7 +387,7 @@
           readOnly: false,
           isBackground: false,
           useDatabase: false,
-          wasmUrl: '5e206a8f21790c38ae50cf54b7b9aca7.wasm?versionId=0ZKko7HNdmPTn60mwIY0N05QVK6.sZ5y',
+          wasmUrl: 'tdlib.wasm?versionId=80kr_jyBBVx.JFqMcBgkvYp12Yx4nlpx',
         });
       } catch (err) {
         showScreen(SCREEN.ERROR, `Не удалось запустить TDLib: ${err.message}`);

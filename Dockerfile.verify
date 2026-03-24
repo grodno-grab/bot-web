@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     gperf \
     git \
+    jq \
     make \
     php-cli \
     python3 \
@@ -60,11 +61,18 @@ RUN ./copy-tdlib.sh
 # Step 4: Build tdweb NPM package (webpack bundles tdweb.js + workers)
 RUN bash -c "source /build/emsdk/emsdk_env.sh && ./build-tdweb.sh"
 
-# Copy reference files AFTER the build so changing them doesn't invalidate build cache
-COPY tdweb.js \
-     1.ce70fb8f3c7a4342d115.worker.js \
-     ce70fb8f3c7a4342d115.worker.js \
-     5e206a8f21790c38ae50cf54b7b9aca7.wasm \
+# Step 5: Inline workers into a single tdweb.inlined.js
+# srcDir = dist (tdweb.js + workers), outDir = dist (where verify.sh expects the output)
+COPY bin/inline-workers /build/inline-workers
+RUN node /build/inline-workers \
+    /build/td/example/web/tdweb/dist \
+    /build/td/example/web/tdweb/dist
+
+# Copy reference files AFTER the build steps so editing them doesn't bust the build cache.
+# README.md is included because verify.sh extracts the live S3 page URL from it.
+COPY tdweb.inlined.js \
+     tdlib.wasm \
+     boot.html \
      index.html \
      styles.css \
      README.md \

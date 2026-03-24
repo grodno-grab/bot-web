@@ -2,9 +2,9 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
-const { createHash } = require('crypto');
-const { readFileSync, writeFileSync } = require('fs');
-const { resolve } = require('path');
+const { createHash, createPublicKey, verify } = require('crypto');
+const { readFileSync, writeFileSync, existsSync } = require('fs');
+const { resolve, join } = require('path');
 const { gzipSync, gunzipSync } = require('zlib');
 const S3 = require('aws-sdk/clients/s3');
 const mime = require('mime-types');
@@ -15,12 +15,11 @@ const s3 = new S3({
   secretAccessKey: process.env.S3_SECRET,
 });
 
-const WASM         = '5e206a8f21790c38ae50cf54b7b9aca7.wasm';
-const WORKER_MAIN  = 'ce70fb8f3c7a4342d115.worker.js';
-const WORKER_CHUNK = '1.ce70fb8f3c7a4342d115.worker.js';
+const WASM         = 'tdlib.wasm';
+const TDWEB        = 'tdweb.inlined.js';
 
 // Static assets uploaded first; VersionIds are captured for index.html patching.
-const STATIC_FILES = ['styles.css', 'tdweb.js', WASM, WORKER_MAIN, WORKER_CHUNK];
+const STATIC_FILES = ['styles.css', TDWEB, WASM];
 
 const ROOT = resolve(__dirname, '..');
 
@@ -52,19 +51,52 @@ const uploadFile = async (filename) => {
   return data.VersionId;
 };
 
-// Upload an in-memory HTML string; returns S3 VersionId.
-const uploadHtml = (content, key) => new Promise((res, rej) => {
-  s3.upload({
-    Bucket: process.env.S3_BUCKET,
-    Key: key,
-    Body: gzipSync(Buffer.from(content)),
+// Upload boot.html to the 't' key; returns VersionId.
+// Skips upload if content is identical to current S3 object.
+const uploadBootAsT = async () => {
+  const localContent = readFileSync(`${ROOT}/boot.html`);
+  const bucket = process.env.S3_BUCKET;
+
+  try {
+    const obj = await s3.getObject({ Bucket: bucket, Key: 't' }).promise();
+    if (gunzipSync(obj.Body).equals(localContent)) {
+      const head = await s3.headObject({ Bucket: bucket, Key: 't' }).promise();
+      console.info('Skipped:  boot.html  →  t  (unchanged)');
+      return head.VersionId;
+    }
+  } catch (e) {
+    if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
+  }
+
+  const data = await s3.upload({
+    Bucket: bucket,
+    Key: 't',
+    Body: gzipSync(localContent),
     ContentType: 'text/html',
     ContentEncoding: 'gzip',
-  }).promise().then((data) => {
-    console.info(`Uploaded: index.html  →  ${key}  (${data.VersionId})`);
-    res(data.VersionId);
-  }).catch(rej);
-});
+  }).promise();
+  console.info(`Uploaded: boot.html  →  t  (${data.VersionId})`);
+  return data.VersionId;
+};
+
+// Upload an in-memory buffer to S3 with gzip encoding.
+const uploadGzipped = async (body, key, contentType) => {
+  const data = await s3.upload({
+    Bucket: process.env.S3_BUCKET,
+    Key: key,
+    Body: gzipSync(body),
+    ContentType: contentType,
+    ContentEncoding: 'gzip',
+  }).promise();
+  return data.VersionId;
+};
+
+// Upload an in-memory HTML string; returns S3 VersionId.
+const uploadHtml = async (content, key) => {
+  const versionId = await uploadGzipped(Buffer.from(content), key, 'text/html');
+  console.info(`Uploaded: index.html  →  ${key}  (${versionId})`);
+  return versionId;
+};
 
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -73,68 +105,166 @@ const computeIntegrity = (filename) => {
   return `sha384-${hash}`;
 };
 
-// Patch index.html in memory: inject S3 VersionIds into asset URLs and worker mapping.
+// Patch index.html in memory: inject S3 VersionIds and integrity hashes into asset URLs.
 // null values mean the file was unchanged — leave its existing versionId in index.html as-is.
-const patchIndex = (html, { styles, tdweb, wasm, main, chunk, stylesIntegrity }) => {
-  if (tdweb !== null)
-    html = html.replace(/src="tdweb\.js[^"]*"/, `src="tdweb.js?versionId=${tdweb}"`);
-  if (styles !== null)
+const patchIndex = (html, { styles, tdweb, wasm, stylesIntegrity, tdwebIntegrity }) => {
+  if (tdweb !== null)   // <script src="tdweb.inlined.js?versionId=..." integrity="...">
+    html = html.replace(
+      /src="tdweb\.inlined\.js[^"]*"\s+integrity="[^"]*"/,
+      `src="tdweb.inlined.js?versionId=${tdweb}" integrity="${tdwebIntegrity}"`
+    );
+  if (styles !== null)  // <link href="styles.css?versionId=..." integrity="...">
     html = html.replace(/href="styles\.css[^"]*"\s+integrity="[^"]*"/, `href="styles.css?versionId=${styles}" integrity="${stylesIntegrity}"`);
-  if (wasm !== null)
+  if (wasm !== null)    // wasmUrl: 'tdlib.wasm?versionId=...'
     html = html.replace(/wasmUrl: '[^']*\.wasm[^']*'/, `wasmUrl: '${WASM}?versionId=${wasm}'`);
-  if (main !== null)
-    html = html.replace(new RegExp(`'${escRe(WORKER_MAIN)}':\\s*(null|'[^']*')`),  `'${WORKER_MAIN}': '${main}'`);
-  if (chunk !== null)
-    html = html.replace(new RegExp(`'${escRe(WORKER_CHUNK)}':\\s*(null|'[^']*')`), `'${WORKER_CHUNK}': '${chunk}'`);
   return html;
+};
+
+// Verify an ECDSA P-256 signature (IEEE P1363, r||s) against content
+// using a raw 65-byte uncompressed public key (base64).
+const verifySignature = (pubKeyB64, sigB64, content) => {
+  // ASN.1 DER SPKI header for a P-256 (secp256r1) uncompressed public key — 26 bytes.
+  // Encodes: SEQUENCE { SEQUENCE { OID ecPublicKey, OID prime256v1 }, BIT STRING header }.
+  // Prepended to the raw 65-byte key point so Node's createPublicKey() accepts it
+  // as a standard SubjectPublicKeyInfo DER structure (format:'der', type:'spki').
+  const SPKI_PREFIX = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex'); // 26 bytes
+  const rawKey  = Buffer.from(pubKeyB64, 'base64'); // 65 bytes
+  const spkiDer = Buffer.concat([SPKI_PREFIX, rawKey]);
+
+  const publicKey = createPublicKey({ key: spkiDer, format: 'der', type: 'spki' });
+  const sig = Buffer.from(sigB64.trim(), 'base64');
+  return verify('sha256', content, { key: publicKey, dsaEncoding: 'ieee-p1363' }, sig);
 };
 
 (async () => {
   try {
-    console.info('Uploading static assets to S3...\n');
-    const [styles, tdweb, wasm, main, chunk] =
-      await Promise.all(STATIC_FILES.map(uploadFile));
+    if (!existsSync(`${ROOT}/boot.html`)) {
+      console.error('Error: boot.html not found.');
+      process.exit(1);
+    }
 
-    console.info('\nPatching and uploading index.html...');
+    console.info('Generating tdweb.inlined.js...');
+    require('child_process').execFileSync(
+      process.execPath,
+      [require.resolve('./inline-workers'), join(ROOT, 'tmp'), ROOT],
+      { stdio: 'inherit' }
+    );
+
+    console.info('\nUploading static assets to S3...\n');
+    const [styles, tdweb, wasm] = await Promise.all(STATIC_FILES.map(uploadFile));
+
+    console.info('\nPatching index.html...');
     const stylesIntegrity = styles !== null ? computeIntegrity('styles.css') : null;
+    const tdwebIntegrity  = tdweb  !== null ? computeIntegrity(TDWEB)        : null;
     const html = readFileSync(`${ROOT}/index.html`, 'utf8');
-    const patched = patchIndex(html, { styles, tdweb, wasm, main, chunk, stylesIntegrity });
+    const patched = patchIndex(html, { styles, tdweb, wasm, stylesIntegrity, tdwebIntegrity });
 
-    // versionIds may be unchanged, but the HTML body itself could have changed — check S3.
-    let s3HtmlUnchanged = false;
-    if (patched === html) {
+    if (patched !== html) {
+      writeFileSync(`${ROOT}/index.html`, patched, 'utf8');
+      console.info('Patched: index.html');
+    } else {
+      console.info('Unchanged: index.html (no versionId changes)');
+    }
+
+    console.info('\nUploading boot.html...');
+    const tVersionId = await uploadBootAsT(); // S3 VersionId of boot.html (stored under key 't')
+
+    // ---- Signature verification & upload ----
+    // Each .sig file is uploaded independently if it exists and is valid for the
+    // current patched index.html. index.html itself is uploaded only when both
+    // signature files on S3 validate against it.
+    console.info('\nVerifying and uploading signatures...');
+    const patchedBuf = Buffer.from(patched);
+    const ggPubKey   = process.env.GG_PUBLIC_KEY;  // GG = Grodno Grab
+    const cpPubKey   = process.env.CP_PUBLIC_KEY;  // CP = Cyberpartisans
+
+    const skipVerify = process.env.SKIP_SIG_VERIFY === '1';
+
+    // Upload a sig file to S3 if the local file exists and its signature is valid.
+    // Returns true if a valid sig is now on S3 (just uploaded or already there).
+    // If SKIP_SIG_VERIFY=1, skips signature verification and uploads unconditionally.
+    const syncSigFile = async (localPath, s3Key, pubKey, label) => {
+      if (!pubKey && !skipVerify) {
+        console.warn(`  Warning: public key for ${label} not set in .env — skipping.`);
+        return false;
+      }
+      if (existsSync(localPath)) {
+        const sig = readFileSync(localPath, 'utf8');
+        if (skipVerify || verifySignature(pubKey, sig, patchedBuf)) {
+          await uploadGzipped(Buffer.from(sig.trim()), s3Key, 'text/plain');
+          console.info(`  Uploaded: ${s3Key}${skipVerify ? '  (verification skipped)' : ''}`);
+          return true;
+        }
+        console.error(`  FAILED: ${s3Key} does not match index.html. Not uploaded.`);
+        return false;
+      }
+      // No local file — check if a valid one already exists on S3.
+      try {
+        const obj = await s3.getObject({ Bucket: process.env.S3_BUCKET, Key: s3Key }).promise();
+        const sig = gunzipSync(obj.Body).toString('utf8');
+        if (verifySignature(pubKey, sig, patchedBuf)) {
+          console.info(`  OK (S3):  ${s3Key}`);
+          return true;
+        }
+        console.warn(`  Warning: ${s3Key} on S3 does not match current index.html.`);
+      } catch (e) {
+        if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
+        console.warn(`  Warning: ${s3Key} not found locally or on S3.`);
+        console.warn(`    Sign with: PRIVATE_KEY=<key> node bin/sign > ${localPath.split('/').pop()}`);
+      }
+      return false;
+    };
+
+    const [ggOk, cpOk] = await Promise.all([
+      syncSigFile(`${ROOT}/index.gg.sig`, 'index.gg.sig', ggPubKey, 'Grodno Grab'),
+      syncSigFile(`${ROOT}/index.cp.sig`, 'index.cp.sig', cpPubKey, 'Cyberpartisans'),
+    ]);
+
+    let indexUploaded = false;
+
+    // Security invariant: index.html is published only when both organizations'
+    // signatures are valid on S3. This ensures neither party can push a page
+    // that the other hasn't signed.
+    if (ggOk && cpOk) {
+      // Check if index.html on S3 is already identical
+      let s3HtmlUnchanged = false;
       try {
         const obj = await s3.getObject({ Bucket: process.env.S3_BUCKET, Key: 'index.html' }).promise();
         s3HtmlUnchanged = gunzipSync(obj.Body).toString('utf8') === patched;
       } catch (e) {
         if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
       }
+
+      if (s3HtmlUnchanged) {
+        console.info('Skipped:  index.html  (unchanged on S3)');
+      } else {
+        console.info('Uploading index.html...');
+        await uploadHtml(patched, 'index.html');
+      }
+      indexUploaded = true;
+    } else {
+      console.warn('\n  index.html NOT uploaded — waiting for both valid signatures on S3.');
     }
 
-    if (s3HtmlUnchanged) {
-      const tHead = await s3.headObject({ Bucket: process.env.S3_BUCKET, Key: 't' }).promise();
-      const tVersionId = tHead.VersionId;
-      console.info('Skipped:  index.html  (unchanged)');
-      console.info(`\nhttps://s3.amazonaws.com/${process.env.S3_BUCKET}/t?versionId=${tVersionId}`);
-    } else {
-      writeFileSync(`${ROOT}/index.html`, patched, 'utf8');
-      console.info('Patched: index.html');
-
-      const [, tVersionId] = await Promise.all([
-        uploadHtml(patched, 'index.html'),
-        uploadHtml(patched, 't'),
-      ]);
-
+    // Patch README with boot.html versionId
+    if (indexUploaded || tVersionId) {
       console.info('\nPatching README files...');
       const patchReadme = (content) =>
         content.replace(/\/t\.t\/t\?versionId=[^\s`'")\]]+/g, `/t.t/t?versionId=${tVersionId}`);
       for (const name of ['README.md', 'README.ru.md']) {
         const filePath = `${ROOT}/${name}`;
-        writeFileSync(filePath, patchReadme(readFileSync(filePath, 'utf8')), 'utf8');
-        console.info(`Patched: ${name}`);
+        const before = readFileSync(filePath, 'utf8');
+        const after = patchReadme(before);
+        if (after !== before) {
+          writeFileSync(filePath, after, 'utf8');
+          console.info(`Patched: ${name}`);
+        }
       }
+    }
 
-      console.info(`\nhttps://s3.amazonaws.com/${process.env.S3_BUCKET}/t?versionId=${tVersionId}`);
+    console.info(`\nhttps://s3.amazonaws.com/${process.env.S3_BUCKET}/t?versionId=${tVersionId}`);
+    if (!indexUploaded) {
+      console.info('\nNote: index.html was NOT uploaded in this run. See warnings above.');
     }
     console.info('\nDone.');
   } catch (e) {

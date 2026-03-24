@@ -10,10 +10,10 @@ Make sure you received the link to this repository or to the web client directly
 
 ## Usage recommendations
 
-1. Copy the full link `https://s3.amazonaws.com/t.t/t?versionId=J1qgAjJ_PtiziFkd85OVnAjDAinW5FJJ` — this guarantees that the code version remains unchanged and unmodified.
-2. Open your browser in **incognito / private mode**, paste the link and open it.
-3. Some built-in mobile browsers may not work correctly — use **Firefox** or **Chrome** in that case.
-4. Open the page source (usually **Ctrl+U**), review it, and make sure it matches this repository exactly.
+1. Copy the full link `https://s3.amazonaws.com/t.t/t?versionId=iOnWdVSFSj8CwfY7PxekYon5Uy42cIa8` — this guarantees that the code version remains unchanged and unmodified.
+2. The link opens a lightweight loader (`boot.html`) that automatically verifies ECDSA P-256 signatures from two independent parties (Grodno Grab and Cyberpartisans) before running any application code. If either signature fails, a red warning screen is shown.
+3. Open your browser in **incognito / private mode**, paste the link and open it.
+4. Some built-in mobile browsers may not work correctly — use **Firefox** or **Chrome** in that case.
 
 ## How it works
 
@@ -41,12 +41,13 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 | Layer | Technology |
 |-------|-----------|
 | Telegram MTProto | [TDLib](https://github.com/tdlib/td) compiled to WebAssembly (`tdweb`) |
-| Crypto | Web Crypto API — AES-CBC with a SHA-256 derived key |
+| Crypto | Web Crypto API — AES-CBC with a SHA-256 derived key; ECDSA P-256 signature verification |
 | UI | Vanilla HTML/CSS/JS, no frameworks |
 | Hosting | Static files on Amazon S3 |
 
 ## Security considerations
 
+- **Dual-party code signing.** The application code (`index.html`) is cryptographically signed by two independent parties using ECDSA P-256. A lightweight loader (`boot.html`) verifies both signatures before executing any code. This ensures that no single party can deploy a tampered version.
 - The page refuses to run inside an iframe or from an unexpected origin.
 - The encrypted payload key is derived from the user's Telegram `user_id` combined with per-document caption material, so the document is only useful to the authenticated user.
 - Session data is cleared both on normal completion and on abrupt tab close (`pagehide` / `beforeunload`). On iOS Safari, bfcache restoration is detected and the page is reloaded to prevent stale sessions.
@@ -55,17 +56,22 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 
 | File | Description |
 |------|-------------|
-| `index.html` | Entire application (UI + logic) |
+| `boot.html` | Signature-verifying loader (distributed via versioned S3 URL) |
+| `index.html` | Application (UI + logic), loaded and verified by `boot.html` |
 | `styles.css` | Stylesheet |
-| `tdweb.js` | tdweb bundle |
-| `*.wasm` | TDLib WebAssembly binary |
-| `*.worker.js` | TDLib worker scripts |
+| `tdweb.inlined.js` | tdweb bundle with workers inlined |
+| `tdlib.wasm` | TDLib WebAssembly binary |
+| `bin/sign` | Signs `index.html` with an ECDSA P-256 private key |
+| `bin/deploy` | Deploys all files to S3 (with signature verification) |
+| `bin/inline-workers` | Inlines tdweb workers into a single bundle and renames the wasm to a stable name |
 
 ## Building tdweb
 
-The `tdweb.js` bundle and the accompanying `.wasm` / `.worker.js` files are built from the TDLib source following the official guide:
+The `tdweb.inlined.js` bundle and `tdlib.wasm` are produced in two steps:
 
-> https://github.com/tdlib/td/blob/master/example/web/README.md
+1. Build `tdweb` from the TDLib source following the official guide:
+   > https://github.com/tdlib/td/blob/master/example/web/README.md
+2. Run `bin/inline-workers` on the webpack output — it embeds the worker scripts into a single `tdweb.inlined.js` file and copies the wasm under the stable name `tdlib.wasm`.
 
 ## Verification
 
@@ -77,19 +83,23 @@ docker build -f Dockerfile.verify -t tdweb-verify .
 docker run --rm tdweb-verify
 ```
 
-### What gets checked (10 checks total)
+### What gets checked (9 checks total)
 
-**Part 1 — Reproducible build (4 checks).**
+**Part 1 — Reproducible build (2 checks).**
 Inside a clean Ubuntu 24.04 container the full TDLib build pipeline runs from scratch:
 OpenSSL 1.1.0l is compiled for WebAssembly with Emscripten 3.1.1, then TDLib
 ([commit `af0cb1d3`](https://github.com/tdlib/td/commit/af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249), version 1.8.62)
 is compiled to WASM, and finally webpack bundles the `tdweb` NPM package — exactly following the [official TDLib instructions](https://github.com/tdlib/td/blob/master/example/web/README.md).
-The SHA-256 hashes of the four resulting files (`tdweb.js`, two `.worker.js`, `.wasm`) are compared with the copies committed to this repository.
+`bin/inline-workers` is then run to embed the workers into a single bundle.
+The SHA-256 hashes of the two resulting files (`tdweb.inlined.js`, `tdlib.wasm`) are compared with the copies committed to this repository.
 
-**Part 2 — Deployment check (6 checks).**
-The versioned S3 URL from this README is fetched, the live page is compared with `index.html`, and then the versionIds for all five assets (`tdweb.js`, `styles.css`, two workers, `wasm`) are extracted from the page and each file is downloaded from S3 and compared with the local repo copy.
+**Part 2 — Deployment check (7 checks).**
+1. The versioned S3 URL from this README is fetched and compared with `boot.html` from the repository.
+2. `index.html` is downloaded from S3 (without a versionId, exactly as `boot.html` does at runtime) and compared with the repository copy.
+3. The versionIds for all three assets (`tdweb.inlined.js`, `styles.css`, `tdlib.wasm`) are extracted from `index.html` and each file is downloaded from S3 and compared with the local repo copy.
+4. `index.gg.sig` and `index.cp.sig` are downloaded from S3 and both ECDSA P-256 signatures (Grodno Grab and Cyberpartisans) are verified against the downloaded `index.html` using the public keys embedded in `boot.html`.
 
-Together these two parts prove: the files served to users are byte-for-byte identical to the repository, and the repository files are the unmodified output of the standard TDLib build.
+Together these two parts prove: the files served to users are byte-for-byte identical to the repository, the repository files are the unmodified output of the standard TDLib build, and the code is signed by both parties.
 
 ### Expected output
 
@@ -100,34 +110,31 @@ Together these two parts prove: the files served to users are byte-for-byte iden
   Emscripten:   3.1.1
 ================================================
 
-OK       tdweb.js
-         f1ffb1209e6a00bf52017a46edf6e13bb3edb20a691b0ed23bdfecd723dbcb38
-OK       1.ce70fb8f3c7a4342d115.worker.js
-         1635989cdac976ed607126ccac57361dd715e6c7bc530ba0a6fdf5abe33e7a91
-OK       ce70fb8f3c7a4342d115.worker.js
-         f6600e2930124bcbdf66de7c3a255942aae14712c199537fa135b0bbc395b5d4
-OK       5e206a8f21790c38ae50cf54b7b9aca7.wasm
+OK       tdweb.inlined.js
+         c56cbb99af3d93d523881eeef46899e2e47d8faf19948d638fa7348b69f40cb2
+OK       tdlib.wasm
          7e3b0bd2a492776e9336b3d17851093325cead0da3a4717528e3b608e17459a9
 
 ================================================
-  Build result: 4 passed, 0 failed
+  Build result: 2 passed, 0 failed
 ================================================
 
 ================================================
   Deployment verification
 ================================================
 
-Page URL:  https://s3.amazonaws.com/t.t/t?versionId=J1qgAjJ_PtiziFkd85OVnAjDAinW5FJJ
+Page URL:  https://s3.amazonaws.com/t.t/t?versionId=iOnWdVSFSj8CwfY7PxekYon5Uy42cIa8
 
-Checking  index.html        OK
-Checking  styles.css        OK
-Checking  tdweb.js          OK
-Checking  1.ce7...worker.js OK
-Checking  ce7...worker.js   OK
-Checking  5e20...wasm       OK
+Checking  boot.html (t key)    OK
+Checking  index.html           OK
+Checking  styles.css           OK
+Checking  tdweb.inlined.js     OK
+Checking  tdlib.wasm           OK
+Checking  Grodno Grab signature    OK
+Checking  Cyberpartisans signature OK
 
 ================================================
-  Total result: 10 passed, 0 failed
+  Total result: 9 passed, 0 failed
 ================================================
 ```
 

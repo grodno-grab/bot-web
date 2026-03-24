@@ -1,0 +1,46 @@
+#!/usr/bin/env node
+/**
+ * Signs index.html with an ECDSA P-256 private key and outputs the base64 signature to stdout.
+ * Signature is in IEEE P1363 format (raw r||s, 64 bytes) for Web Crypto compatibility.
+ *
+ * Usage:
+ *   PRIVATE_KEY=<pkcs8-der-base64> bin/sign > index.gg.sig   # Grodno Grab
+ *   PRIVATE_KEY=<pkcs8-der-base64> bin/sign > index.cp.sig   # Cyberpartisans
+ *
+ * Environment variable:
+ *   PRIVATE_KEY  — ECDSA P-256 private key in PKCS8 DER format, base64-encoded.
+ *
+ * Key generation (one-time):
+ *   node -e "
+ *     const { generateKeyPairSync } = require('crypto');
+ *     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+ *     const spki   = publicKey.export({ type: 'spki', format: 'der' });
+ *     const rawPub = spki.slice(26);   // raw 65 bytes (uncompressed point) = key for boot.html
+ *     const pkcs8  = privateKey.export({ type: 'pkcs8', format: 'der' });
+ *     console.log('PUBLIC  (for boot.html):', rawPub.toString('base64'));
+ *     console.log('PRIVATE (for .env):     ', pkcs8.toString('base64'));
+ *   "
+ */
+
+const { createPrivateKey, sign } = require('crypto');
+const { readFileSync }           = require('fs');
+const { resolve }                = require('path');
+
+const privKeyB64 = process.env.PRIVATE_KEY;
+if (!privKeyB64) {
+  console.error('Error: PRIVATE_KEY environment variable is not set.');
+  console.error('Usage: PRIVATE_KEY=<pkcs8-der-base64> node bin/sign > index.gg.sig');
+  process.exit(1);
+}
+
+const privateKey = createPrivateKey({
+  key:    Buffer.from(privKeyB64, 'base64'),
+  format: 'der',
+  type:   'pkcs8',
+});
+
+const ROOT    = resolve(__dirname, '..');
+const content = readFileSync(`${ROOT}/index.html`);
+const sig     = sign('sha256', content, { key: privateKey, dsaEncoding: 'ieee-p1363' });
+
+process.stdout.write(sig.toString('base64') + '\n');
