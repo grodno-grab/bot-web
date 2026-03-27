@@ -1,0 +1,368 @@
+From: bot-web patch <patch@bot-web>
+Subject: Add initTakeoutSession, finishTakeoutSession, getLeftChats
+
+Adds three new methods to the TDLib public API:
+- initTakeoutSession: opens account.initTakeoutSession on the server
+- finishTakeoutSession: calls account.finishTakeoutSession
+- getLeftChats: calls channels.getLeftChannels wrapped in invokeWithTakeout
+
+These expose enumeration of channels and supergroups the current user has
+left — functionality not otherwise available in the TDLib public API.
+
+diff --git a/td/generate/scheme/td_api.tl b/td/generate/scheme/td_api.tl
+--- a/td/generate/scheme/td_api.tl
++++ b/td/generate/scheme/td_api.tl
+@@ -10777,6 +10777,22 @@ getSuitableDiscussionChats = Chats;
+ //@description Returns a list of recently inactive supergroups and channels. Can be used when user reaches limit on the number of joined supergroups and channels and receives the error "CHANNELS_TOO_MUCH". Also, the limit can be increased with Telegram Premium
+ getInactiveSupergroupChats = Chats;
+
++//@description Contains a takeout session identifier used for account data export @id Takeout session identifier
++takeoutSession id:int64 = TakeoutSession;
++
++//@description Initializes a takeout session to export the current user's data. Must be finalized with finishTakeoutSession
++//@message_users True, if private chats and chats with bots need to be included
++//@message_chats True, if basic group chats need to be included
++//@message_megagroups True, if supergroup chats need to be included
++//@message_channels True, if channels need to be included
++initTakeoutSession message_users:Bool message_chats:Bool message_megagroups:Bool message_channels:Bool = TakeoutSession;
++
++//@description Finishes or cancels a previously started takeout session
++//@takeout_session_id Identifier of the takeout session returned by initTakeoutSession
++//@success Pass true if all data has been successfully transferred; pass false to cancel the session
++finishTakeoutSession takeout_session_id:int64 success:Bool = Ok;
++
++//@description Returns supergroups and channels that the current user has left. Requires an active takeout session
++//@takeout_session_id Identifier of the takeout session returned by initTakeoutSession
++//@offset Number of chats to skip; pass 0 for the first request
++getLeftChats takeout_session_id:int64 offset:int32 = Chats;
++
+ //@description Returns a list of channel chats, which can be used as a personal chat
+ getSuitablePersonalChats = Chats;
+
+diff --git a/td/telegram/ChatManager.h b/td/telegram/ChatManager.h
+--- a/td/telegram/ChatManager.h
++++ b/td/telegram/ChatManager.h
+@@ -212,6 +212,8 @@ class ChatManager final : public Actor {
+
+   void on_get_inactive_channels(vector<tl_object_ptr<telegram_api::Chat>> &&chats, Promise<Unit> &&promise);
+
++  void on_get_left_channels(vector<tl_object_ptr<telegram_api::Chat>> &&chats, Promise<Unit> &&promise);
++
+   void remove_inactive_channel(ChannelId channel_id);
+
+   void register_message_channels(MessageFullId message_full_id, vector<ChannelId> channel_ids);
+@@ -329,6 +331,12 @@ class ChatManager final : public Actor {
+
+   vector<DialogId> get_inactive_channels(Promise<Unit> &&promise);
+
++  vector<DialogId> get_left_channels(int64 takeout_id, int32 offset, Promise<Unit> &&promise);
++
++  void init_takeout_session(bool message_users, bool message_chats, bool message_megagroups,
++                            bool message_channels, Promise<int64> &&promise);
++
++  void finish_takeout_session(int64 takeout_id, bool success, Promise<Unit> &&promise);
++
+   void dismiss_dialog_suggested_action(SuggestedAction action, Promise<Unit> &&promise);
+
+   bool is_user_contact(UserId user_id, bool is_mutual = false) const;
+@@ -950,6 +958,8 @@ class ChatManager final : public Actor {
+
+   void on_create_inactive_channels(vector<ChannelId> &&channel_ids, Promise<Unit> &&promise);
+
++  void on_create_left_channels(vector<ChannelId> &&channel_ids, Promise<Unit> &&promise);
++
+   void update_dialogs_for_discussion(DialogId dialog_id, bool is_suitable);
+
+   void get_channel_statistics_dc_id_impl(ChannelId channel_id, bool for_full_statistics, Promise<DcId> &&promise);
+@@ -992,6 +1002,9 @@ class ChatManager final : public Actor {
+   bool inactive_channel_ids_inited_ = false;
+   vector<ChannelId> inactive_channel_ids_;
+
++  bool left_channel_ids_ready_ = false;
++  vector<DialogId> left_channel_dialog_ids_;
++
+   FlatHashMap<UserId, vector<Promise<Unit>>, UserIdHash> load_user_from_database_queries_;
+
+diff --git a/td/telegram/ChatManager.cpp b/td/telegram/ChatManager.cpp
+--- a/td/telegram/ChatManager.cpp
++++ b/td/telegram/ChatManager.cpp
+@@ -1537,6 +1537,126 @@ class GetInactiveChannelsQuery final : public Td::ResultHandler {
+   }
+ };
+
++// Serializes invokeWithTakeout#aca9fd2e wrapping any inner MTProto function.
++class TakeoutFunctionWrapper final : public telegram_api::Function {
++  int64 takeout_id_;
++  tl_object_ptr<telegram_api::Function> inner_;
++
++ public:
++  static constexpr int32 ID = static_cast<int32>(0xaca9fd2e);
++
++  TakeoutFunctionWrapper(int64 takeout_id, tl_object_ptr<telegram_api::Function> inner)
++      : takeout_id_(takeout_id), inner_(std::move(inner)) {
++  }
++
++  int32 get_id() const final {
++    return ID;
++  }
++
++  void store(TlStorerCalcLength &s) const final {
++    s.store_binary(ID);
++    s.store_binary(takeout_id_);
++    inner_->store(s);
++  }
++
++  void store(TlStorerUnsafe &s) const final {
++    s.store_binary(ID);
++    s.store_binary(takeout_id_);
++    inner_->store(s);
++  }
++
++  void store(TlStorerToString &s, const char *field_name) const final {
++    s.store_class_begin(field_name, "invokeWithTakeout");
++    s.store_field("takeout_id", takeout_id_);
++    s.store_object_field("query", static_cast<const BaseObject *>(inner_.get()));
++    s.store_class_end();
++  }
++};
++
++class GetLeftChannelsQuery final : public Td::ResultHandler {
++  Promise<Unit> promise_;
++
++ public:
++  explicit GetLeftChannelsQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
++  }
++
++  void send(int64 takeout_id, int32 offset) {
++    send_query(G()->net_query_creator().create(TakeoutFunctionWrapper(
++        takeout_id, telegram_api::make_object<telegram_api::channels_getLeftChannels>(offset))));
++  }
++
++  void on_result(BufferSlice packet) final {
++    auto result_ptr = fetch_result<telegram_api::channels_getLeftChannels>(packet);
++    if (result_ptr.is_error()) {
++      return on_error(result_ptr.move_as_error());
++    }
++    auto chats_ptr = result_ptr.move_as_ok();
++    LOG(INFO) << "Receive result for GetLeftChannelsQuery: " << to_string(chats_ptr);
++    vector<tl_object_ptr<telegram_api::Chat>> chats;
++    switch (chats_ptr->get_id()) {
++      case telegram_api::messages_chats::ID:
++        chats = std::move(move_tl_object_as<telegram_api::messages_chats>(chats_ptr)->chats_);
++        break;
++      case telegram_api::messages_chatsSlice::ID:
++        chats = std::move(move_tl_object_as<telegram_api::messages_chatsSlice>(chats_ptr)->chats_);
++        break;
++      default:
++        UNREACHABLE();
++    }
++    td_->chat_manager_->on_get_left_channels(std::move(chats), std::move(promise_));
++  }
++
++  void on_error(Status status) final {
++    promise_.set_error(std::move(status));
++  }
++};
++
++class InitTakeoutSessionQuery final : public Td::ResultHandler {
++  Promise<int64> promise_;
++
++ public:
++  explicit InitTakeoutSessionQuery(Promise<int64> &&promise) : promise_(std::move(promise)) {
++  }
++
++  void send(bool message_users, bool message_chats, bool message_megagroups, bool message_channels) {
++    int32 flags = 0;
++    if (message_users) {
++      flags |= 2;  // flags.1
++    }
++    if (message_chats) {
++      flags |= 4;  // flags.2
++    }
++    if (message_megagroups) {
++      flags |= 8;  // flags.3
++    }
++    if (message_channels) {
++      flags |= 16;  // flags.4
++    }
++    send_query(G()->net_query_creator().create(telegram_api::account_initTakeoutSession(
++        flags, false, message_users, message_chats, message_megagroups, message_channels, false, 0)));
++  }
++
++  void on_result(BufferSlice packet) final {
++    auto result_ptr = fetch_result<telegram_api::account_initTakeoutSession>(packet);
++    if (result_ptr.is_error()) {
++      return on_error(result_ptr.move_as_error());
++    }
++    auto result = result_ptr.move_as_ok();
++    LOG(INFO) << "Receive result for InitTakeoutSessionQuery: takeout_id=" << result->id_;
++    promise_.set_value(result->id_);
++  }
++
++  void on_error(Status status) final {
++    promise_.set_error(std::move(status));
++  }
++};
++
++class FinishTakeoutSessionQuery final : public Td::ResultHandler {
++  Promise<Unit> promise_;
++
++ public:
++  explicit FinishTakeoutSessionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
++  }
++
++  void send(int64 takeout_id, bool success) {
++    int32 flags = success ? 1 : 0;  // flags.0 = SUCCESS
++    send_query(G()->net_query_creator().create(
++        telegram_api::account_finishTakeoutSession(flags, success)));
++  }
++
++  void on_result(BufferSlice packet) final {
++    auto result_ptr = fetch_result<telegram_api::account_finishTakeoutSession>(packet);
++    if (result_ptr.is_error()) {
++      return on_error(result_ptr.move_as_error());
++    }
++    LOG(INFO) << "Receive result for FinishTakeoutSessionQuery";
++    promise_.set_value(Unit());
++  }
++
++  void on_error(Status status) final {
++    promise_.set_error(std::move(status));
++  }
++};
++
+ class GetUsersQuery final : public Td::ResultHandler {
+@@ -4328,6 +4448,51 @@ void ChatManager::remove_inactive_channel(ChannelId channel_id) {
+   }
+ }
+
++vector<DialogId> ChatManager::get_left_channels(int64 takeout_id, int32 offset, Promise<Unit> &&promise) {
++  if (left_channel_ids_ready_) {
++    left_channel_ids_ready_ = false;
++    auto result = std::move(left_channel_dialog_ids_);
++    left_channel_dialog_ids_.clear();
++    promise.set_value(Unit());
++    return result;
++  }
++  td_->create_handler<GetLeftChannelsQuery>(std::move(promise))->send(takeout_id, offset);
++  return {};
++}
++
++void ChatManager::on_get_left_channels(vector<tl_object_ptr<telegram_api::Chat>> &&chats,
++                                        Promise<Unit> &&promise) {
++  auto channel_ids = get_channel_ids(std::move(chats), "on_get_left_channels");
++
++  MultiPromiseActorSafe mpas{"GetLeftChannelsMultiPromiseActor"};
++  mpas.add_promise(PromiseCreator::lambda(
++      [actor_id = actor_id(this), channel_ids, promise = std::move(promise)](Unit) mutable {
++        send_closure(actor_id, &ChatManager::on_create_left_channels, std::move(channel_ids),
++                     std::move(promise));
++      }));
++  mpas.set_ignore_errors(true);
++  auto lock_promise = mpas.get_promise();
++
++  for (auto channel_id : channel_ids) {
++    td_->messages_manager_->create_dialog(DialogId(channel_id), false, mpas.get_promise());
++  }
++
++  lock_promise.set_value(Unit());
++}
++
++void ChatManager::on_create_left_channels(vector<ChannelId> &&channel_ids, Promise<Unit> &&promise) {
++  left_channel_ids_ready_ = true;
++  left_channel_dialog_ids_ = DialogId::get_dialog_ids(channel_ids);
++  promise.set_value(Unit());
++}
++
++void ChatManager::init_takeout_session(bool message_users, bool message_chats, bool message_megagroups,
++                                        bool message_channels, Promise<int64> &&promise) {
++  td_->create_handler<InitTakeoutSessionQuery>(std::move(promise))->send(message_users, message_chats,
++                                                                         message_megagroups, message_channels);
++}
++
++void ChatManager::finish_takeout_session(int64 takeout_id, bool success, Promise<Unit> &&promise) {
++  td_->create_handler<FinishTakeoutSessionQuery>(std::move(promise))->send(takeout_id, success);
++}
++
+ void ChatManager::register_message_channels(MessageFullId message_full_id, vector<ChannelId> channel_ids) {
+   auto dialog_id = message_full_id.get_dialog_id();
+   CHECK(dialog_id.get_type() == DialogType::Channel);
+diff --git a/td/telegram/Requests.h b/td/telegram/Requests.h
+--- a/td/telegram/Requests.h
++++ b/td/telegram/Requests.h
+@@ -443,6 +443,12 @@ class Requests {
+
+   void on_request(uint64 id, const td_api::getInactiveSupergroupChats &request);
+
++  void on_request(uint64 id, const td_api::getLeftChats &request);
++
++  void on_request(uint64 id, const td_api::initTakeoutSession &request);
++
++  void on_request(uint64 id, const td_api::finishTakeoutSession &request);
++
+   void on_request(uint64 id, const td_api::getSuitablePersonalChats &request);
+
+   void on_request(uint64 id, const td_api::openChat &request);
+diff --git a/td/telegram/Requests.cpp b/td/telegram/Requests.cpp
+--- a/td/telegram/Requests.cpp
++++ b/td/telegram/Requests.cpp
+@@ -526,6 +526,57 @@ class GetInactiveSupergroupChatsRequest final : public RequestActor<> {
+   }
+ };
+
++class GetLeftChatsRequest final : public RequestActor<> {
++  int64 takeout_session_id_;
++  int32 offset_;
++  vector<DialogId> dialog_ids_;
++
++  void do_run(Promise<Unit> &&promise) final {
++    dialog_ids_ =
++        td_->chat_manager_->get_left_channels(takeout_session_id_, offset_, std::move(promise));
++  }
++
++  void do_send_result() final {
++    send_result(td_->dialog_manager_->get_chats_object(-1, dialog_ids_, "GetLeftChatsRequest"));
++  }
++
++ public:
++  GetLeftChatsRequest(ActorShared<Td> td, uint64 request_id, int64 takeout_session_id, int32 offset)
++      : RequestActor(std::move(td), request_id),
++        takeout_session_id_(takeout_session_id),
++        offset_(offset) {
++  }
++};
++
+ class SearchRecentlyFoundChatsRequest final : public RequestActor<> {
+@@ -3309,6 +3360,28 @@ void Requests::on_request(uint64 id, const td_api::getInactiveSupergroupChats &r
+   CREATE_NO_ARGS_REQUEST(GetInactiveSupergroupChatsRequest);
+ }
+
++void Requests::on_request(uint64 id, const td_api::getLeftChats &request) {
++  CHECK_IS_USER();
++  CREATE_REQUEST(GetLeftChatsRequest, request.takeout_session_id_, request.offset_);
++}
++
++void Requests::on_request(uint64 id, const td_api::initTakeoutSession &request) {
++  CHECK_IS_USER();
++  CREATE_REQUEST_PROMISE();
++  auto query_promise =
++      PromiseCreator::lambda([promise = std::move(promise)](Result<int64> result) mutable {
++        if (result.is_error()) {
++          promise.set_error(result.move_as_error());
++        } else {
++          promise.set_value(td_api::make_object<td_api::takeoutSession>(result.ok()));
++        }
++      });
++  td_->chat_manager_->init_takeout_session(request.message_users_, request.message_chats_,
++                                            request.message_megagroups_, request.message_channels_,
++                                            std::move(query_promise));
++}
++
++void Requests::on_request(uint64 id, const td_api::finishTakeoutSession &request) {
++  CHECK_IS_USER();
++  CREATE_OK_REQUEST_PROMISE();
++  td_->chat_manager_->finish_takeout_session(request.takeout_session_id_, request.success_,
++                                              std::move(promise));
++}
++
+ void Requests::on_request(uint64 id, const td_api::getSuitablePersonalChats &request) {

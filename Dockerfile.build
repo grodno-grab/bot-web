@@ -1,0 +1,70 @@
+# Reproducible TDLib WASM build with takeout patch
+#
+# Produces a patched tdlib.wasm that adds three new API methods:
+#   initTakeoutSession, finishTakeoutSession, getLeftChats
+#
+# Base TDLib commit: af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249
+# Emscripten:        3.1.1
+# OpenSSL:           1.1.0l  (same as original build)
+#
+# Usage:
+#   docker build --no-cache -f Dockerfile.build -t tdlib-takeout-build .
+#   docker run --rm -v "$(pwd):/project" tdlib-takeout-build
+#
+# The output replaces tdlib.wasm in the project root directly.
+# tdweb.inlined.js does NOT need to be rebuilt — it only passes JSON
+# through td_emscripten_send/receive, which are unchanged.
+#
+# Verification:
+#   git clone https://github.com/tdlib/td.git /tmp/td-verify
+#   cd /tmp/td-verify && git checkout af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249
+#   python3 build/apply-patch.py /tmp/td-verify
+#   # Then build with Emscripten 3.1.1 and compare SHA256 of output wasm.
+
+FROM emscripten/emsdk:3.1.1
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    cmake \
+    gperf \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone TDLib and check out the exact verified commit.
+# (Full clone required — GitHub does not support shallow fetch of arbitrary commits.)
+RUN git clone https://github.com/tdlib/td.git /td
+RUN cd /td && git checkout af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249
+
+# Verify we are on the correct commit
+RUN cd /td && git rev-parse HEAD | grep -q af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249
+
+# Copy and apply patch via string-matching Python script (robust, no line-number fragility)
+COPY build/apply-patch.py /apply-patch.py
+RUN python3 /apply-patch.py /td
+
+# Verify patch was actually applied (fails the build if symbols are missing)
+RUN grep -q "GetLeftChannelsQuery"  /td/td/telegram/ChatManager.cpp && \
+    grep -q "initTakeoutSession"    /td/td/generate/scheme/td_api.tl && \
+    grep -q "TakeoutFunctionWrapper" /td/td/telegram/ChatManager.cpp && \
+    echo "Patch OK: all expected symbols found"
+
+# Show what changed (for audit trail in build log)
+RUN cd /td && git diff --stat
+
+WORKDIR /td/example/web
+
+# Build OpenSSL for WASM (OpenSSL_1_1_0l, same version as original build)
+RUN ./build-openssl.sh
+
+# Generate TDLib source files and build the WASM target
+RUN ./build-tdlib.sh
+
+# Locate and copy the output wasm file
+# cmake builds td_wasm target; the .wasm file lands under build/wasm/
+RUN mkdir -p /output && \
+    find /td/example/web/build/wasm -name "*.wasm" -exec cp {} /output/tdlib.wasm \; && \
+    echo "Built wasm:" && ls -lh /output/tdlib.wasm && \
+    sha256sum /output/tdlib.wasm
+
+CMD ["sh", "-c", "cp /output/tdlib.wasm /project/tdlib.wasm && chown $(stat -c '%u:%g' /project) /project/tdlib.wasm && echo 'Done: tdlib.wasm replaced'"]

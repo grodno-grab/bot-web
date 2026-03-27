@@ -52,7 +52,11 @@ WORKDIR /build/td/example/web
 # Step 1: Build OpenSSL 1.1.0l for WebAssembly
 RUN bash -c "source /build/emsdk/emsdk_env.sh && ./build-openssl.sh"
 
-# Step 2: Compile TDLib to WebAssembly
+# Apply takeout patch (adds initTakeoutSession, finishTakeoutSession, getLeftChats)
+COPY build/apply-patch.py /apply-patch.py
+RUN python3 /apply-patch.py /build/td
+
+# Step 2: Compile TDLib to WebAssembly (with takeout patch)
 RUN bash -c "source /build/emsdk/emsdk_env.sh && ./build-tdlib.sh"
 
 # Step 3: Copy compiled WASM into tdweb package sources

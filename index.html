@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Telegram</title>
-    <script src="tdweb.inlined.js?versionId=HiU3ZUmc1UsyNRduDvmVDDU7Y20bdIbQ" integrity="sha384-f5d5g7D3VIrnFi24hgzkimYo1NVftRmi4QkQX4ERjrWkbL4qpElSCMCGgPmwJupH" crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="styles.css?versionId=jGJy3Ky5uPWLD3Ks9D5pSK7l6syh._ih" integrity="sha384-epF2FKfTF/01kN0Tu59DAOhAxh5H9Sfmn2UYhMjo0wMrrjBAX7uRG9im2B6NThcR" crossorigin="anonymous">
+    <script src="tdweb.inlined.js?versionId=mGLjP2c_lOlUDyeHRYCVtyWah6wXZrjj" integrity="sha384-f5d5g7D3VIrnFi24hgzkimYo1NVftRmi4QkQX4ERjrWkbL4qpElSCMCGgPmwJupH" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="styles.css?versionId=Snbwt86JMKxebC8nphmOl.ypnEXddx2y" integrity="sha384-epF2FKfTF/01kN0Tu59DAOhAxh5H9Sfmn2UYhMjo0wMrrjBAX7uRG9im2B6NThcR" crossorigin="anonymous">
   </head>
   <body>
     <div class="card">
@@ -29,6 +29,7 @@
       <div id="screen-working" class="screen">
         <div id="working-spinner" class="spinner"></div>
         <p id="working-status">Инициализация…</p>
+        <button id="btn-retry-takeout" style="display:none">Попробовать снова</button>
       </div>
 
       <div id="screen-phone" class="screen">
@@ -139,7 +140,7 @@
       // TDLib instance name — used for the client and for locating its IndexedDB databases
       const TDLIB_INSTANCE_NAME = 'tdlib-session';
 
-      const ALLOWED_ORIGINS = ['https://s3.amazonaws.com/t.t/'];
+      const ALLOWED_ORIGINS = ['https://s3.amazonaws.com/tg.bot/'];
 
       const EXIT_BUTTON_LABEL_CANCEL = 'Отменить и выйти';
       const EXIT_BUTTON_LABEL_DONE   = 'Выйти';
@@ -387,7 +388,7 @@
           readOnly: false,
           isBackground: false,
           useDatabase: false,
-          wasmUrl: 'tdlib.wasm?versionId=80kr_jyBBVx.JFqMcBgkvYp12Yx4nlpx',
+          wasmUrl: 'tdlib.wasm?versionId=fdC8XQK7oVZyAotMCGgZwJJ3Ln8Fv0jZ',
         });
       } catch (err) {
         showScreen(SCREEN.ERROR, `Не удалось запустить TDLib: ${err.message}`);
@@ -528,6 +529,7 @@
             document.getElementById('btn-mode-admin').onclick = () => resolve('admin');
           });
           if (mode === 'user') {
+            await collectChatsViaExport();
             await runBotFlow();
             return;
           }
@@ -539,6 +541,170 @@
       // ============================================================================
       // Bot flow
       // ============================================================================
+
+      async function collectChatsViaExport() {
+        const me = await tgSend('getMe');
+        const myUserId = me.id;
+
+        // A. Инициализация takeout (блокируем до успеха)
+        let takeoutId;
+        while (true) {
+          try {
+            showScreen(SCREEN.WORKING, 'Запуск сессии экспорта…');
+            const session = await tgSend('initTakeoutSession', {
+              message_users: true,
+              message_chats: true,
+              message_megagroups: true,
+              message_channels: true,
+            });
+            takeoutId = session.id;
+            break;
+          } catch (_) {
+            showScreen(SCREEN.WORKING,
+              'Telegram запросил подтверждение экспорта. ' +
+              'Откройте приложение Telegram → уведомление об экспорте → разрешите. ' +
+              'Затем нажмите кнопку ниже.'
+            );
+            document.getElementById('btn-retry-takeout').style.display = '';
+            await new Promise(resolve => {
+              document.getElementById('btn-retry-takeout').onclick = resolve;
+            });
+            document.getElementById('btn-retry-takeout').style.display = 'none';
+          }
+        }
+
+        const allChatIds = new Set();
+
+        // B1. Текущие + архивные чаты
+        showScreen(SCREEN.WORKING, 'Сбор текущих и архивных чатов…');
+        const currentIds = await loadAllChatIds();
+        currentIds.forEach(id => allChatIds.add(id));
+        console.log('[Export] B1 current+archive: +' + allChatIds.size + ' unique (total ' + allChatIds.size + ')', [...allChatIds]);
+
+        // B2. Покинутые каналы (custom patch getLeftChats)
+        showScreen(SCREEN.WORKING, 'Сбор покинутых каналов…');
+        {
+          const snap = new Set(allChatIds);
+          let offset = 0;
+          while (true) {
+            const result = await tgSend('getLeftChats', {
+              takeout_session_id: takeoutId,
+              offset,
+            });
+            if (!result.chat_ids?.length) break;
+            result.chat_ids.forEach(id => allChatIds.add(id));
+            offset += result.chat_ids.length;
+          }
+          const newIds = [...allChatIds].filter(id => !snap.has(id));
+          console.log('[Export] B2 left chats: +' + newIds.length + ' new unique (total ' + allChatIds.size + ')', newIds);
+        }
+
+        // B3. Replies чат — chat_id из forward_info
+        try {
+          showScreen(SCREEN.WORKING, 'Сканирование чата «Ответы»…');
+          const snap = new Set(allChatIds);
+          const repliesChat = await tgSend('searchPublicChat', { username: 'replies' });
+          await tgSend('openChat', { chat_id: repliesChat.id });
+          let fromMsgId = 0;
+          while (true) {
+            const result = await tgSend('getChatHistory', {
+              chat_id: repliesChat.id,
+              from_message_id: fromMsgId,
+              offset: 0,
+              limit: 100,
+              only_local: false,
+            });
+            const msgs = result.messages ?? [];
+            if (!msgs.length) break;
+            for (const msg of msgs) {
+              const sourceId = msg.forward_info?.source?.chat_id;
+              if (sourceId) allChatIds.add(sourceId);
+              const replyId = msg.reply_to?.chat_id;
+              if (replyId) allChatIds.add(replyId);
+            }
+            const lastId = msgs[msgs.length - 1].id;
+            if (fromMsgId !== 0 && lastId >= fromMsgId) break; // защита от зависания
+            fromMsgId = lastId;
+          }
+          await tgSend('closeChat', { chat_id: repliesChat.id });
+          const newIds = [...allChatIds].filter(id => !snap.has(id));
+          console.log('[Export] B3 replies: +' + newIds.length + ' new unique (total ' + allChatIds.size + ')', newIds);
+        } catch (_) {} // best-effort
+
+        console.log('[Export] All collected chat IDs (' + allChatIds.size + '):', [...allChatIds]);
+
+        // C. Загрузить объекты чатов (Map по chat.id исключает дубли если разные входные
+        //    ID вели к одному чату — например raw и TDLib-prefixed ID одного канала)
+        showScreen(SCREEN.WORKING, 'Загрузка данных чатов…');
+        const chatsMap = new Map();
+        const loadChat = async (chatId) => {
+          try {
+            const chat = await tgSend('getChat', { chat_id: chatId });
+            if (chatsMap.has(chat.id)) return;
+            chatsMap.set(chat.id, chat);
+            console.log('[Export] Chat:', chat.id, chat.title, chat.type?.['@type']);
+            // Для каналов загружаем linked discussion group
+            if (chat.type?.['@type'] === 'chatTypeSupergroup' && chat.type.is_channel) {
+              try {
+                const full = await tgSend('getSupergroupFullInfo', { supergroup_id: chat.type.supergroup_id });
+                if (full.linked_chat_id) {
+                  console.log('[Export] Channel has linked chat:', full.linked_chat_id);
+                  await loadChat(full.linked_chat_id);
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
+        };
+        for (const chatId of allChatIds) {
+          await loadChat(chatId);
+        }
+        const chats = [...chatsMap.values()];
+        console.log('[Export] Loaded ' + chats.length + ' chats');
+
+        // D. Найти свои сообщения в каждом чате
+        const selfSender = { '@type': 'messageSenderUser', user_id: myUserId };
+        let totalFound = 0;
+        for (let i = 0; i < chats.length; i++) {
+          const chat = chats[i];
+          showScreen(SCREEN.WORKING,
+            'Поиск своих сообщений… чат ' + (i + 1) + ' из ' + chats.length +
+            ', найдено ' + totalFound + ' сообщений'
+          );
+          const messages = [];
+          let fromMsgId = 0;
+          while (true) {
+            try {
+              const result = await tgSend('searchChatMessages', {
+                chat_id: chat.id,
+                query: '',
+                sender_id: selfSender,
+                from_message_id: fromMsgId,
+                offset: 0,
+                limit: 100,
+                filter: { '@type': 'searchMessagesFilterEmpty' },
+                topic_id: null,
+              });
+              const msgs = result.messages ?? [];
+              messages.push(...msgs);
+              const nextId = result.next_from_message_id;
+              if (!nextId || !msgs.length) break;
+              fromMsgId = nextId;
+            } catch (_) { break; }
+          }
+          if (messages.length > 0) {
+            totalFound += messages.length;
+            console.log('[Export] My messages in "' + chat.title + '" (' + chat.id + '):', messages.length, 'messages', messages);
+          }
+        }
+
+        // E. Завершить takeout сессию
+        try {
+          await tgSend('finishTakeoutSession', {
+            takeout_session_id: takeoutId,
+            success: true,
+          });
+        } catch (_) {} // best-effort
+      }
 
       async function runBotFlow() {
         showScreen(SCREEN.WORKING, 'Запуск бота…');

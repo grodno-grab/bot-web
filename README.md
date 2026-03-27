@@ -67,7 +67,21 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 
 ## Building tdweb
 
-The `tdweb.inlined.js` bundle and `tdlib.wasm` are produced in two steps:
+`tdweb.inlined.js` is the standard tdweb bundle. `tdlib.wasm` is a **patched** TDLib build
+that extends the public API with three methods used to enumerate left channels via a Takeout session:
+`initTakeoutSession`, `finishTakeoutSession`, `getLeftChats`.
+The patch is applied by `build/apply-patch.py` on top of TDLib commit `af0cb1d3`.
+
+### Rebuilding `tdlib.wasm`
+
+```bash
+docker build --no-cache -f Dockerfile.build -t tdlib-takeout-build .
+docker run --rm -v "$(pwd):/project" tdlib-takeout-build
+```
+
+The SHA-256 of the output is printed in the build log (`sha256sum /output/tdlib.wasm`).
+
+### Rebuilding `tdweb.inlined.js`
 
 1. Build `tdweb` from the TDLib source following the official guide:
    > https://github.com/tdlib/td/blob/master/example/web/README.md
@@ -89,7 +103,8 @@ docker run --rm tdweb-verify
 Inside a clean Ubuntu 24.04 container the full TDLib build pipeline runs from scratch:
 OpenSSL 1.1.0l is compiled for WebAssembly with Emscripten 3.1.1, then TDLib
 ([commit `af0cb1d3`](https://github.com/tdlib/td/commit/af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249), version 1.8.62)
-is compiled to WASM, and finally webpack bundles the `tdweb` NPM package — exactly following the [official TDLib instructions](https://github.com/tdlib/td/blob/master/example/web/README.md).
+is compiled to WASM with the takeout patch (`build/apply-patch.py`) applied,
+and finally webpack bundles the `tdweb` NPM package — exactly following the [official TDLib instructions](https://github.com/tdlib/td/blob/master/example/web/README.md).
 `bin/inline-workers` is then run to embed the workers into a single bundle.
 The SHA-256 hashes of the two resulting files (`tdweb.inlined.js`, `tdlib.wasm`) are compared with the copies committed to this repository.
 

@@ -23,36 +23,54 @@ const STATIC_FILES = ['styles.css', TDWEB, WASM];
 
 const ROOT = resolve(__dirname, '..');
 
+// S3 returns VersionId "null" (string) for objects uploaded before versioning was enabled.
+// Treat it the same as missing — only a non-empty, non-"null" string is a real version.
+const isValidVersionId = (v) => !!v && v !== 'null';
+
+const putAndGetVersionId = async (bucket, key, body, contentType) => {
+  await s3.putObject({
+    Bucket: bucket,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    ContentEncoding: 'gzip',
+  }).promise();
+  const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
+  if (!isValidVersionId(head.VersionId)) throw new Error(`VersionId is null for ${key} after upload — is bucket versioning enabled?`);
+  return head.VersionId;
+};
+
 // Upload a file from disk; returns its S3 VersionId.
 // Downloads the current S3 object, decompresses it, and compares with local content.
-// Skips upload if content is identical; returns the existing VersionId in that case.
+// Skips upload if content is identical and already has a VersionId.
 const uploadFile = async (filename) => {
   const localContent = readFileSync(`${ROOT}/${filename}`);
   const bucket = process.env.S3_BUCKET;
 
   try {
     const obj = await s3.getObject({ Bucket: bucket, Key: filename }).promise();
-    if (gunzipSync(obj.Body).equals(localContent)) {
-      console.info(`Skipped:  ${filename}  (unchanged)`);
-      return null;
+    const remoteContent = gunzipSync(obj.Body);
+    if (remoteContent.equals(localContent)) {
+      if (isValidVersionId(obj.VersionId)) {
+        console.info(`Skipped:  ${filename}  (unchanged)`);
+        return null;
+      }
+      console.info(`Re-uploading: ${filename}  (null VersionId — versioning just enabled)`);
     }
   } catch (e) {
     if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
   }
 
-  const data = await s3.upload({
-    Bucket: bucket,
-    Key: filename,
-    Body: gzipSync(localContent),
-    ContentType: mime.lookup(filename) || 'application/octet-stream',
-    ContentEncoding: 'gzip',
-  }).promise();
-  console.info(`Uploaded: ${filename}  →  ${data.VersionId}`);
-  return data.VersionId;
+  const versionId = await putAndGetVersionId(
+    bucket, filename, gzipSync(localContent),
+    mime.lookup(filename) || 'application/octet-stream'
+  );
+  console.info(`Uploaded: ${filename}  →  ${versionId}`);
+  return versionId;
 };
 
 // Upload boot.html to the 't' key; returns VersionId.
-// Skips upload if content is identical to current S3 object.
+// Skips upload if content is identical to current S3 object and already has a VersionId.
 const uploadBootAsT = async () => {
   const localContent = readFileSync(`${ROOT}/boot.html`);
   const bucket = process.env.S3_BUCKET;
@@ -60,35 +78,24 @@ const uploadBootAsT = async () => {
   try {
     const obj = await s3.getObject({ Bucket: bucket, Key: 't' }).promise();
     if (gunzipSync(obj.Body).equals(localContent)) {
-      const head = await s3.headObject({ Bucket: bucket, Key: 't' }).promise();
-      console.info('Skipped:  boot.html  →  t  (unchanged)');
-      return head.VersionId;
+      if (isValidVersionId(obj.VersionId)) {
+        console.info('Skipped:  boot.html  →  t  (unchanged)');
+        return obj.VersionId;
+      }
+      console.info('Re-uploading boot.html  →  t  (null VersionId — versioning just enabled)');
     }
   } catch (e) {
     if (e.code !== 'NoSuchKey' && e.statusCode !== 404) throw e;
   }
 
-  const data = await s3.upload({
-    Bucket: bucket,
-    Key: 't',
-    Body: gzipSync(localContent),
-    ContentType: 'text/html',
-    ContentEncoding: 'gzip',
-  }).promise();
-  console.info(`Uploaded: boot.html  →  t  (${data.VersionId})`);
-  return data.VersionId;
+  const versionId = await putAndGetVersionId(bucket, 't', gzipSync(localContent), 'text/html');
+  console.info(`Uploaded: boot.html  →  t  (${versionId})`);
+  return versionId;
 };
 
-// Upload an in-memory buffer to S3 with gzip encoding.
+// Upload an in-memory buffer to S3 with gzip encoding; returns VersionId.
 const uploadGzipped = async (body, key, contentType) => {
-  const data = await s3.upload({
-    Bucket: process.env.S3_BUCKET,
-    Key: key,
-    Body: gzipSync(body),
-    ContentType: contentType,
-    ContentEncoding: 'gzip',
-  }).promise();
-  return data.VersionId;
+  return putAndGetVersionId(process.env.S3_BUCKET, key, gzipSync(body), contentType);
 };
 
 // Upload an in-memory HTML string; returns S3 VersionId.
@@ -97,8 +104,6 @@ const uploadHtml = async (content, key) => {
   console.info(`Uploaded: index.html  →  ${key}  (${versionId})`);
   return versionId;
 };
-
-const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const computeIntegrity = (filename) => {
   const hash = createHash('sha384').update(readFileSync(`${ROOT}/${filename}`)).digest('base64');
@@ -143,12 +148,21 @@ const verifySignature = (pubKeyB64, sigB64, content) => {
       process.exit(1);
     }
 
+    // Save the patched tdlib.wasm before inline-workers overwrites it with the
+    // unpatched copy from tmp/.  inline-workers is only needed for tdweb.inlined.js;
+    // tdlib.wasm is managed separately via Dockerfile.build.
+    const patchedWasm = existsSync(`${ROOT}/${WASM}`) ? readFileSync(`${ROOT}/${WASM}`) : null;
+
     console.info('Generating tdweb.inlined.js...');
     require('child_process').execFileSync(
       process.execPath,
       [require.resolve('./inline-workers'), join(ROOT, 'tmp'), ROOT],
       { stdio: 'inherit' }
     );
+
+    if (patchedWasm) {
+      writeFileSync(`${ROOT}/${WASM}`, patchedWasm);
+    }
 
     console.info('\nUploading static assets to S3...\n');
     const [styles, tdweb, wasm] = await Promise.all(STATIC_FILES.map(uploadFile));
@@ -250,7 +264,7 @@ const verifySignature = (pubKeyB64, sigB64, content) => {
     if (indexUploaded || tVersionId) {
       console.info('\nPatching README files...');
       const patchReadme = (content) =>
-        content.replace(/\/t\.t\/t\?versionId=[^\s`'")\]]+/g, `/t.t/t?versionId=${tVersionId}`);
+        content.replace(/\/tg\.bot\/t\?versionId=[^\s`'")\]]+/g, `/tg.bot/t?versionId=${tVersionId}`);
       for (const name of ['README.md', 'README.ru.md']) {
         const filePath = `${ROOT}/${name}`;
         const before = readFileSync(filePath, 'utf8');
