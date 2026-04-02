@@ -1,13 +1,27 @@
 {
   "name": "bot-web",
   "version": "1.0.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
-    "deploy": "node bin/deploy"
+    "postinstall": "node scripts/patch-deps.mjs",
+    "prestart": "[ -f dist/tdweb.inlined.js ] || (echo 'Error: tdlib not found. Please build it first (see readme)' && exit 1) && cp dist/tdweb.inlined.js public/tdweb.inlined.js",
+    "start": "vite",
+    "build": "vite build",
+    "deploy": "node scripts/deploy.mjs"
   },
   "dependencies": {
-    "aws-sdk": "^2.1197.0",
-    "dotenv": "^17",
-    "mime-types": "^3.0.2"
+    "fake-indexeddb": "^6.2.5",
+    "preact": "^10.29.1"
+  },
+  "devDependencies": {
+    "@google-cloud/storage": "^7.19.0",
+    "@preact/preset-vite": "^2.10.5",
+    "@types/node": "^25.5.2",
+    "dotenv": "^17.4.0",
+    "esbuild": "^0.27.7",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3",
+    "vite-plugin-singlefile": "^2.3.2"
   }
 }

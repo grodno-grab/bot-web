@@ -1,0 +1,684 @@
+/* ─── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --tg-bg:               #212121;
+  --tg-bg-secondary:     #0f0f0f;
+  --tg-surface:          #2b2b2b;
+  --tg-surface-hover:    #363636;
+  --tg-primary:          #3390ec;
+  --tg-primary-hover:    #2b7cd3;
+  --tg-primary-disabled: #1e4a7a;
+  --tg-danger:           #e53935;
+  --tg-danger-hover:     #c62828;
+  --tg-text:             #ffffff;
+  --tg-text-secondary:   #aaaaaa;
+  --tg-text-hint:        #707579;
+  --tg-divider:          rgba(255,255,255,0.08);
+  --tg-input-bg:         #1a1a1a;
+  --tg-input-border:     #3a3a3a;
+  --tg-input-focus:      #3390ec;
+  --tg-error:            #ef5350;
+  --tg-success:          #4caf50;
+  --tg-radius-btn:       22px;
+  --tg-radius-input:     10px;
+  --tg-radius-card:      12px;
+  --tg-header-height:    56px;
+  --tg-transition:       0.2s ease;
+}
+
+/* ─── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+  -webkit-tap-highlight-color: transparent;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: #666; }
+
+/* ─── Base ───────────────────────────────────────────────────────────────────── */
+body {
+  margin: 0;
+  padding: 0;
+  height: var(--viewport-height, 100svh);
+  overflow: hidden;
+  background: #141414;
+  font-family: -apple-system, BlinkMacSystemFont, 'Roboto', 'Segoe UI', system-ui, sans-serif;
+  color: var(--tg-text);
+  font-size: 1rem;
+}
+
+a { color: var(--tg-primary); }
+a:visited { color: #7ab8f5; }
+
+ol, ul { padding-left: 20px; margin: 6px 0 14px; }
+li { margin-bottom: 6px; line-height: 1.55; }
+
+/* ─── App shell ──────────────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: var(--viewport-height, 100svh);
+}
+
+.app-header {
+  flex-shrink: 0;
+  height: var(--tg-header-height);
+  background: var(--tg-bg-secondary);
+  border-bottom: 1px solid var(--tg-divider);
+}
+
+.app-header-inner {
+  max-width: 600px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 4px;
+  gap: 4px;
+}
+
+.app-header-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--tg-primary);
+  cursor: pointer;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background var(--tg-transition);
+  padding: 0;
+  width: 44px;
+  font-size: 1rem;
+}
+.app-header-back:hover { background: rgba(51,144,236,0.12); }
+
+.app-header-title {
+  flex: 1;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--tg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  /* compensate for back button to truly center */
+  margin-right: 44px;
+}
+.app-header-title.no-back { margin-right: 0; }
+
+.app-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Transition wrapper: constrained to 600px, fills the content area height */
+.app-content > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+}
+
+/* ─── Screen transition ──────────────────────────────────────────────────────── */
+.screen-enter-forward {
+  animation: slide-in-right 0.22s ease both;
+}
+.screen-enter-back {
+  animation: slide-in-left 0.22s ease both;
+}
+@keyframes slide-in-right {
+  from { transform: translateX(28px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@keyframes slide-in-left {
+  from { transform: translateX(-28px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+/* ─── Auth screen layout ─────────────────────────────────────────────────────── */
+.auth-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 24px;
+}
+
+.auth-screen-icon {
+  margin-bottom: 24px;
+  color: var(--tg-primary);
+  flex-shrink: 0;
+}
+
+.auth-screen-title {
+  font-size: 1.75rem;
+  font-weight: 500;
+  color: var(--tg-text);
+  text-align: center;
+  margin: 0 0 10px;
+}
+
+.auth-screen-hint {
+  font-size: 0.9375rem;
+  color: var(--tg-text-secondary);
+  text-align: center;
+  line-height: 1.55;
+  margin: 0 0 28px;
+  max-width: 340px;
+}
+
+.auth-screen-form {
+  width: 100%;
+  max-width: 340px;
+}
+
+/* ─── General screen layout ──────────────────────────────────────────────────── */
+.screen {
+  padding: 20px 16px 24px;
+}
+
+.screen-centered {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.screen-icon {
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.screen-title {
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--tg-text);
+  margin: 0 0 10px;
+}
+
+.screen-hint {
+  font-size: 0.9375rem;
+  color: var(--tg-text-secondary);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+
+/* ─── Inputs ─────────────────────────────────────────────────────────────────── */
+.tg-input-wrap {
+  position: relative;
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.tg-input-wrap input,
+.tg-code-input {
+  display: block;
+  width: 100%;
+  background: var(--tg-input-bg);
+  border: 1.5px solid var(--tg-input-border);
+  border-radius: var(--tg-radius-input);
+  color: var(--tg-text);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color var(--tg-transition);
+  padding: 20px 16px 8px;
+}
+.tg-input-wrap input:focus {
+  border-color: var(--tg-input-focus);
+}
+.tg-input-wrap input::placeholder { color: transparent; }
+
+.tg-input-wrap label {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  color: var(--tg-text-hint);
+  pointer-events: none;
+  transition: top 0.15s, transform 0.15s, font-size 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.tg-input-wrap input:focus + label,
+.tg-input-wrap input:not(:placeholder-shown) + label {
+  top: 10px;
+  transform: none;
+  font-size: 0.72rem;
+  color: var(--tg-primary);
+}
+.tg-input-wrap input:not(:focus):not(:placeholder-shown) + label {
+  color: var(--tg-text-hint);
+}
+
+/* password show/hide toggle */
+.tg-input-wrap input[type="password"],
+.tg-input-wrap input.has-toggle {
+  padding-right: 48px;
+}
+.tg-input-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--tg-text-hint);
+  display: flex;
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  transition: color var(--tg-transition);
+}
+.tg-input-toggle:hover { color: var(--tg-text-secondary); background: transparent; }
+
+/* autofill override */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--tg-input-bg) inset;
+  -webkit-text-fill-color: var(--tg-text);
+  caret-color: var(--tg-text);
+}
+
+/* code boxes */
+.code-boxes {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 16px;
+  cursor: text;
+}
+
+.code-box {
+  width: 52px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tg-input-bg);
+  border: 1.5px solid var(--tg-input-border);
+  border-radius: var(--tg-radius-input);
+  font-size: 1.75rem;
+  font-weight: 500;
+  color: var(--tg-text);
+  transition: border-color var(--tg-transition);
+  user-select: none;
+}
+
+.code-box--cursor {
+  border-color: var(--tg-input-focus);
+}
+
+.code-box--cursor::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.6rem;
+  background: var(--tg-input-focus);
+  margin-left: 1px;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* standard (non-floating) input for date range */
+input.plain {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--tg-input-bg);
+  border: 1.5px solid var(--tg-input-border);
+  border-radius: var(--tg-radius-input);
+  color: var(--tg-text);
+  font-size: 1rem;
+  outline: none;
+  margin-bottom: 0;
+  transition: border-color var(--tg-transition);
+}
+input.plain::placeholder { color: var(--tg-text-hint); }
+input.plain:focus { border-color: var(--tg-input-focus); }
+
+/* ─── Buttons ─────────────────────────────────────────────────────────────────── */
+button {
+  display: block;
+  width: 100%;
+  height: 50px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--tg-radius-btn);
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--tg-transition), transform 0.1s, opacity var(--tg-transition);
+  background: var(--tg-primary);
+  color: #fff;
+}
+button:hover:not(:disabled) { background: var(--tg-primary-hover); }
+button:active:not(:disabled) { transform: scale(0.98); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+.btn-danger {
+  background: var(--tg-danger);
+}
+.btn-danger:hover:not(:disabled) { background: var(--tg-danger-hover); }
+
+.btn-outline {
+  background: transparent;
+  border: 1.5px solid var(--tg-primary);
+  color: var(--tg-primary);
+}
+.btn-outline:hover:not(:disabled) { background: rgba(51,144,236,0.1); }
+
+.btn-outline-danger {
+  background: transparent;
+  border: 1.5px solid var(--tg-danger);
+  color: var(--tg-danger);
+}
+.btn-outline-danger:hover:not(:disabled) { background: rgba(229,57,53,0.1); }
+
+.btn-text {
+  background: transparent;
+  color: var(--tg-primary);
+  height: auto;
+  padding: 10px 0;
+  width: auto;
+  font-weight: 400;
+  border-radius: 4px;
+}
+.btn-text:hover:not(:disabled) { background: transparent; opacity: 0.8; }
+
+.btn-text-danger {
+  background: transparent;
+  color: var(--tg-danger);
+  height: auto;
+  padding: 10px 0;
+  width: auto;
+  font-weight: 400;
+  border-radius: 4px;
+}
+.btn-text-danger:hover:not(:disabled) { background: transparent; opacity: 0.8; }
+
+.btn-gap { margin-top: 12px; }
+
+/* ─── Field error ─────────────────────────────────────────────────────────────── */
+.field-error {
+  font-size: 0.8125rem;
+  color: var(--tg-error);
+  min-height: 18px;
+  margin: -4px 0 12px;
+  line-height: 1.4;
+}
+
+/* ─── Spinner ─────────────────────────────────────────────────────────────────── */
+.spinner {
+  width: 48px; height: 48px;
+  border: 3px solid rgba(51,144,236,0.2);
+  border-top-color: var(--tg-primary);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  margin: 0 auto 20px;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── List items (menu/settings style) ───────────────────────────────────────── */
+.tg-list {
+  width: 100%;
+  flex: 1;
+}
+
+.tg-list-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--tg-divider);
+  border-radius: 0;
+  color: var(--tg-text);
+  font-size: 1rem;
+  cursor: pointer;
+  text-align: left;
+  gap: 14px;
+  height: auto;
+  transition: background var(--tg-transition);
+}
+.tg-list-item:first-child { border-top: 1px solid var(--tg-divider); }
+.tg-list-item:active:not(:disabled) { transform: none; background: var(--tg-surface-hover); }
+.tg-list-item:hover:not(:disabled) { background: var(--tg-surface-hover); }
+
+.tg-list-item-icon {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: rgba(51,144,236,0.15);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: var(--tg-primary);
+}
+
+.tg-list-item-icon.danger {
+  background: rgba(229,57,53,0.15);
+  color: var(--tg-danger);
+}
+
+.tg-list-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tg-list-item-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--tg-text);
+}
+
+.tg-list-item-desc {
+  font-size: 0.8125rem;
+  color: var(--tg-text-secondary);
+  line-height: 1.4;
+}
+
+/* ─── Chat list items ────────────────────────────────────────────────────────── */
+.chat-list-group-label {
+  padding: 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tg-primary);
+  text-align: center;
+}
+
+.chat-list-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--tg-divider);
+  border-radius: 0;
+  color: var(--tg-text);
+  font-size: 1rem;
+  cursor: pointer;
+  text-align: left;
+  gap: 14px;
+  height: auto;
+  transition: background var(--tg-transition);
+}
+.chat-list-item:first-child { border-top: 1px solid var(--tg-divider); }
+.chat-list-group-label + .chat-list-item { border-top: 1px solid var(--tg-divider); }
+.chat-list-item:active { transform: none; background: var(--tg-surface-hover); }
+.chat-list-item:hover { background: var(--tg-surface-hover); }
+
+.chat-list-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--tg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Chat select checkbox ───────────────────────────────────────────────────── */
+.tg-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--tg-text-hint);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--tg-transition), border-color var(--tg-transition);
+  color: transparent;
+}
+.tg-check.checked {
+  background: var(--tg-primary);
+  border-color: var(--tg-primary);
+  color: #fff;
+}
+
+/* ─── Warning/info box ───────────────────────────────────────────────────────── */
+.warning-box {
+  background: rgba(229,57,53,0.1);
+  border: 1px solid rgba(229,57,53,0.4);
+  border-radius: var(--tg-radius-card);
+  padding: 12px 14px;
+  color: var(--tg-error);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.info-box {
+  background: rgba(51,144,236,0.08);
+  border-left: 3px solid var(--tg-primary);
+  padding: 10px 14px;
+  color: var(--tg-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  margin: 0 0 16px;
+  border-radius: 0 6px 6px 0;
+}
+
+/* ─── Date range form ────────────────────────────────────────────────────────── */
+.date-range-form {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.date-range-form label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--tg-text-secondary);
+}
+
+/* ─── Intro screen ───────────────────────────────────────────────────────────── */
+.intro-content {
+  padding: 20px 16px 24px;
+}
+
+.intro-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.intro-text {
+  font-size: 0.9375rem;
+  color: var(--tg-text-secondary);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.intro-source {
+  font-size: 0.8125rem;
+  color: var(--tg-text-hint);
+  margin-top: 8px;
+}
+
+.intro-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+.intro-actions button { flex: 1; }
+
+/* ─── Footer cancel button ───────────────────────────────────────────────────── */
+.app-footer-cancel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--tg-divider);
+  background: var(--tg-bg);
+}
+
+.app-footer-cancel-inner {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 8px 16px;
+}
+
+.app-footer-cancel button {
+  width: 100%;
+  height: 44px;
+  background: transparent;
+  color: var(--tg-danger);
+  border: none;
+  border-radius: var(--tg-radius-btn);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--tg-transition);
+}
+.app-footer-cancel button:hover:not(:disabled) {
+  background: rgba(229,57,53,0.1);
+}
+.app-footer-cancel button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ─── Working status ─────────────────────────────────────────────────────────── */
+#working-status {
+  text-align: center;
+  color: var(--tg-text-secondary);
+  font-size: 0.9375rem;
+  margin: 0;
+}
