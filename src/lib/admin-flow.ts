@@ -214,12 +214,19 @@ async function runAdminDeletion(
     return 0;
   }
 
+  const maxMsgId = fromMsgId;
+  let minMsgId = 0;
+  try {
+    const startMsg = await send('getChatMessageByDate', { chat_id: chat.id, date: startTs }) as TdUpdate & { id: number };
+    minMsgId = startMsg.id;
+  } catch (_) {}
+
   const adminIds = await fetchPublicAdminIds(chat.id, send);
   const userIds = new Set<number>();
   const botIds = new Set<number>();
 
   for (let pass = 0; pass < MAX_VERIFY_PASSES; pass++) {
-    const found = await scanAndDelete(chat, startTs, endTs, fromMsgId, userIds, botIds, adminIds, send, ctrl);
+    const found = await scanAndDelete(chat, startTs, endTs, fromMsgId, minMsgId, maxMsgId, userIds, botIds, adminIds, send, ctrl);
     if (found === 0) break;
     try { fromMsgId = await getStartMsgId(); } catch (_) { break; }
   }
@@ -263,6 +270,8 @@ async function scanAndDelete(
   startTs: number,
   endTs: number,
   fromMsgId: number,
+  minMsgId: number,
+  maxMsgId: number,
   userIds: Set<number>,
   botIds: Set<number>,
   adminIds: Set<number>,
@@ -270,6 +279,8 @@ async function scanAndDelete(
   ctrl: TelegramController,
 ): Promise<number> {
   let deletedCount = 0;
+  let processedCount = 0;
+  const rangeSize = maxMsgId - minMsgId;
 
   while (true) {
     let messages: TdUpdate[];
@@ -287,7 +298,6 @@ async function scanAndDelete(
     if (messages.length === 0) break;
 
     const batchDate = new Date((messages[messages.length - 1].date as number) * 1000);
-    ctrl.showWorking(`Удаление сообщений (${formatMonthYear(batchDate)})…`);
 
     const batchIds: number[] = [];
 
@@ -324,6 +334,13 @@ async function scanAndDelete(
 
       batchIds.push(msg.id as number);
     }
+
+    processedCount += batchIds.length;
+    const currentMsgId = messages[messages.length - 1].id as number;
+    const progress = rangeSize > 0
+      ? Math.min(100, Math.round((maxMsgId - currentMsgId) / rangeSize * 100))
+      : 0;
+    ctrl.showWorking(`Удаление сообщений (${formatMonthYear(batchDate)})…\n~${progress}% · найдено ${processedCount}`);
 
     for (let i = 0; i < batchIds.length; i += DELETE_MESSAGES_BATCH_SIZE) {
       deletedCount += await ensureMessagesDeleted(chat.id, batchIds.slice(i, i + DELETE_MESSAGES_BATCH_SIZE), send);

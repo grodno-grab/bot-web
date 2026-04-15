@@ -704,4 +704,5 @@ button:disabled { opacity: 0.45; cursor: default; }
   color: var(--tg-text-secondary);
   font-size: 0.9375rem;
   margin: 0;
+  white-space: pre-line;
 }
