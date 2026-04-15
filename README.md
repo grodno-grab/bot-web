@@ -31,7 +31,7 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 
 | Layer | Technology |
 |-------|-----------|
-| Telegram MTProto | [TDLib](https://github.com/tdlib/td) compiled to WebAssembly (`tdweb`) |
+| Telegram MTProto | [TDLib](https://github.com/grodno-grab/tdlib-account-export) compiled to WebAssembly (`tdweb`) |
 | UI | [Preact](https://preactjs.com/) + TypeScript |
 | Build | [Vite](https://vitejs.dev/) + [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) |
 | Crypto | Web Crypto API — AES-CBC with a SHA-256 derived key |

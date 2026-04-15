@@ -37,11 +37,10 @@ RUN git clone https://github.com/emscripten-core/emsdk.git \
     && ./emsdk install 3.1.1 \
     && ./emsdk activate 3.1.1
 
-# TDLib at the exact commit that produced the reference files
-# Commit: af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249 (version 1.8.62)
-RUN git clone https://github.com/tdlib/td.git \
+# Our TDLib fork that adds additional features not provided by original td repo
+RUN git clone https://github.com/grodno-grab/tdlib-account-export.git td \
     && cd td \
-    && git checkout af0cb1d30a1e5cb1a10cd83b48998ca9ea9ce249
+    && git checkout 1f4fa52e4366eceee1e87458a9433a4ed16e5afb
 
 WORKDIR /build/td/example/web
 
