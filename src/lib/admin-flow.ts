@@ -60,8 +60,22 @@ async function runChatDeletionFlow(
   send: TdSend,
   ctrl: TelegramController,
 ): Promise<'next' | 'done'> {
+  let canHideMembers = false;
+  let hasHiddenMembers = false;
+  try {
+    const fullInfo = await send('getSupergroupFullInfo', { supergroup_id: chat.type.supergroup_id }) as TdUpdate & {
+      can_hide_members?: boolean;
+      has_hidden_members?: boolean;
+    };
+    canHideMembers = fullInfo.can_hide_members === true;
+    hasHiddenMembers = fullInfo.has_hidden_members === true;
+  } catch (_) {}
+
   while (true) {
-    const dates = await ctrl.waitForDateRange(chat.title);
+    const dates = await ctrl.waitForDateRange(
+      chat.title,
+      canHideMembers && !hasHiddenMembers ? chat.type.supergroup_id : undefined,
+    );
     if (!dates) return 'next'; // back — return to chat list
 
     const confirmed = await ctrl.waitForAdminConfirm(chat, dates.startDateStr, dates.endDateStr);

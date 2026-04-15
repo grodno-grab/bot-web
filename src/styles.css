@@ -570,6 +570,29 @@ button:disabled { opacity: 0.45; cursor: default; }
   color: #fff;
 }
 
+/* ─── Hide members warning (DateRangeScreen) ─────────────────────────────────── */
+.hide-members-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(229,57,53,0.07);
+  border: 1px solid rgba(229,57,53,0.3);
+  border-radius: var(--tg-radius-card);
+  margin-bottom: 16px;
+  font-size: 0.875rem;
+  color: var(--tg-error);
+}
+.hide-members-warning span { flex: 1; }
+.hide-members-warning button {
+  flex-shrink: 0;
+  width: auto;
+  height: auto;
+  font-size: 0.875rem;
+  padding: 6px 14px;
+  border-radius: 8px;
+}
+
 /* ─── Warning/info box ───────────────────────────────────────────────────────── */
 .warning-box {
   background: rgba(229,57,53,0.1);

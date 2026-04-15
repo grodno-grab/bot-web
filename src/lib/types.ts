@@ -11,6 +11,8 @@ export interface TdChat {
       data: string;
     };
   };
+  can_hide_members?: boolean;
+  has_hidden_members?: boolean;
 }
 
 export interface DateRange {
@@ -54,7 +56,7 @@ export interface TelegramController {
   waitForBotDone(text: string): Promise<'back' | 'done'>;
   waitForModeSelect(): Promise<'user' | 'admin'>;
   waitForAdminChatSelect(groups: AdminChatGroup[]): Promise<TdChat | null>;
-  waitForDateRange(chatTitle: string): Promise<DateRange | null>;
+  waitForDateRange(chatTitle: string, supergroupIdToHide?: number): Promise<DateRange | null>;
   waitForAdminConfirm(chat: TdChat, startDate: string, endDate: string): Promise<boolean>;
   waitForAdminDone(
     chatTitle: string, startDate: string, endDate: string, count: number,

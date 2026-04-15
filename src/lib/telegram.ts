@@ -59,6 +59,13 @@ export class TelegramSession {
     await this.send('checkAuthenticationPassword', { password });
   }
 
+  async toggleHideMembers(supergroupId: number): Promise<void> {
+    await this.send('toggleSupergroupHasHiddenMembers', {
+      supergroup_id: supergroupId,
+      has_hidden_members: true,
+    });
+  }
+
   async cancelAndExit(): Promise<void> {
     this.isSessionActive = false;
     this.cleanupPerformed = true;

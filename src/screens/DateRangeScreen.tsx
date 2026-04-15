@@ -8,6 +8,7 @@ interface Props {
   chatTitle: string;
   defaultFrom?: string;
   defaultTo?: string;
+  onHideMembers?: () => Promise<void>;
   onSubmit: (range: DateRange) => void;
 }
 
@@ -18,10 +19,11 @@ function autoFormatDate(raw: string): string {
   return d;
 }
 
-export function DateRangeScreen({ chatTitle, defaultFrom = '01.01.2020', defaultTo = todayDdMmYyyy(), onSubmit }: Props) {
+export function DateRangeScreen({ chatTitle, defaultFrom = '01.01.2020', defaultTo = todayDdMmYyyy(), onHideMembers, onSubmit }: Props) {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
   const [error, setError] = useState('');
+  const [membersHidden, setMembersHidden] = useState(false);
 
   const handleSubmit = () => {
     const startDay = parseDdMmYyyy(from);
@@ -49,6 +51,19 @@ export function DateRangeScreen({ chatTitle, defaultFrom = '01.01.2020', default
         <p style="font-size:0.875rem;color:var(--tg-text-secondary);margin:0 0 12px">
           Чат: <strong style="color:var(--tg-text)">{chatTitle}</strong>
         </p>
+      )}
+      {onHideMembers && !membersHidden && (
+        <div class="hide-members-warning">
+          <span>Список участников чата не скрыт</span>
+          <button
+            onClick={async () => {
+              setMembersHidden(true);
+              try { await onHideMembers(); } catch (_) {}
+            }}
+          >
+            Скрыть
+          </button>
+        </div>
       )}
       <div class="info-box">
         Будут удалены <strong>все сообщения в чате</strong> от каждого пользователя,

@@ -60,6 +60,7 @@ interface AppState {
   botDoneText: string;
   adminChatGroups: AdminChatGroup[];
   selectedChatTitle: string;
+  dateRangeSupergroupIdToHide: number | null;
   dateFromValue: string;
   dateToValue: string;
   adminConfirmText: string;
@@ -79,6 +80,7 @@ const initialState: AppState = {
   botDoneText: '',
   adminChatGroups: [],
   selectedChatTitle: '',
+  dateRangeSupergroupIdToHide: null,
   dateFromValue: '01.01.2020',
   dateToValue: todayDdMmYyyy(),
   adminConfirmText: '',
@@ -182,12 +184,13 @@ export function App() {
     waitForAdminChatSelect: (groups) =>
       waitFor<TdChat | null>(prev => ({ ...prev, screen: 'admin-chats', prevScreen: prev.screen, adminChatGroups: groups })),
 
-    waitForDateRange: (chatTitle) =>
+    waitForDateRange: (chatTitle, supergroupIdToHide) =>
       waitFor<DateRange | null>(prev => ({
         ...prev,
         screen: 'date-range',
         prevScreen: prev.screen,
         selectedChatTitle: chatTitle,
+        dateRangeSupergroupIdToHide: supergroupIdToHide ?? null,
       })),
 
     waitForAdminConfirm: (chat, startDate, endDate) =>
@@ -344,6 +347,9 @@ export function App() {
               chatTitle={state.selectedChatTitle}
               defaultFrom={state.dateFromValue}
               defaultTo={state.dateToValue}
+              onHideMembers={state.dateRangeSupergroupIdToHide != null
+                ? () => sessionRef.current!.toggleHideMembers(state.dateRangeSupergroupIdToHide!)
+                : undefined}
               onSubmit={range => {
                 setState(prev => ({ ...prev, dateFromValue: range.startDateStr, dateToValue: range.endDateStr }));
                 dispatch(range);
