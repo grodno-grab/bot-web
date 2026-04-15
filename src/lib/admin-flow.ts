@@ -226,6 +226,7 @@ async function runAdminDeletion(
   const botIds = new Set<number>();
 
   for (let pass = 0; pass < MAX_VERIFY_PASSES; pass++) {
+    try { await send('resetChatLocalDeletedMessages', { chat_id: chat.id }); } catch (_) {}
     const found = await scanAndDelete(chat, startTs, endTs, fromMsgId, minMsgId, maxMsgId, userIds, botIds, adminIds, send, ctrl);
     if (found === 0) break;
     try { fromMsgId = await getStartMsgId(); } catch (_) { break; }
@@ -372,6 +373,7 @@ async function ensureMessagesDeleted(chatId: number, ids: number[], send: TdSend
       }
     }
     try {
+      try { await send('resetChatLocalDeletedMessages', { chat_id: chatId }); } catch (_) {}
       const result = await send('getMessages', { chat_id: chatId, message_ids: remaining }) as TdUpdate & { messages?: (TdUpdate | null)[] };
       remaining = (result.messages ?? [])
         .filter((m): m is TdUpdate => m !== null && !!(m.id as number))
