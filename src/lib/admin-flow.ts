@@ -322,9 +322,7 @@ async function scanAndDelete(
         }
       }
 
-      if (await canDeleteForAll(chat.id, msg.id as number, send)) {
-        batchIds.push(msg.id as number);
-      }
+      batchIds.push(msg.id as number);
     }
 
     for (let i = 0; i < batchIds.length; i += DELETE_MESSAGES_BATCH_SIZE) {
@@ -340,15 +338,6 @@ async function scanAndDelete(
   }
 
   return deletedCount;
-}
-
-async function canDeleteForAll(chatId: number, messageId: number, send: TdSend): Promise<boolean> {
-  try {
-    const props = await send('getMessageProperties', { chat_id: chatId, message_id: messageId }) as TdUpdate & { can_be_deleted_for_all_users?: boolean };
-    return props.can_be_deleted_for_all_users === true;
-  } catch (_) {
-    return false;
-  }
 }
 
 async function ensureMessagesDeleted(chatId: number, ids: number[], send: TdSend): Promise<number> {
