@@ -16,6 +16,19 @@ if (missing.length > 0) {
 
 const { GCS_BUCKET, GCS_OBJECT, SKIP_BUILD } = process.env;
 
+const configJsonUrl = `https://storage.googleapis.com/${GCS_BUCKET}/config.json`;
+let productionUrl = null;
+try {
+  const resp = await fetch(configJsonUrl);
+  if (resp.ok) {
+    const config = await resp.json();
+    productionUrl = config.url ?? null;
+    if (productionUrl) console.log(`Production URL from config.json: ${productionUrl}`);
+  }
+} catch (e) {
+  console.log(`config.json not found or error: ${e.message}`);
+}
+
 if (SKIP_BUILD !== '1') {
   console.log('Building...');
   execSync('npx vite build', { stdio: 'inherit' });
@@ -39,5 +52,29 @@ await file.save(compressed, {
 });
 
 const [metadata] = await file.getMetadata();
-const url = `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_OBJECT}?generation=${metadata.generation}`;
-console.log(`\nDeployed: ${url}`);
+const newGeneration = String(metadata.generation);
+const newUrl = `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_OBJECT}?generation=${newGeneration}`;
+
+let productionGeneration = null;
+if (productionUrl) {
+  const match = productionUrl.match(/[?&]generation=(\d+)/);
+  if (match) productionGeneration = match[1];
+}
+
+const [allVersions] = await storage.bucket(GCS_BUCKET).getFiles({ prefix: GCS_OBJECT, versions: true });
+const versionsOfObject = allVersions.filter(f => f.name === GCS_OBJECT);
+for (const v of versionsOfObject) {
+  const gen = v.metadata.generation;
+  if (gen !== newGeneration && gen !== productionGeneration) {
+    await v.delete();
+    console.log(`Deleted old version: generation ${gen}`);
+  }
+}
+
+const [remaining] = await storage.bucket(GCS_BUCKET).getFiles({ prefix: GCS_OBJECT, versions: true });
+console.log(`Remaining versions: ${remaining.filter(f => f.name === GCS_OBJECT).length}`);
+
+if (productionUrl) {
+  console.log(`\nCurrently on production: ${productionUrl}`);
+}
+console.log(`Release candidate: ${newUrl}`);

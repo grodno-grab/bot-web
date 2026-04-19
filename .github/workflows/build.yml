@@ -84,6 +84,10 @@ jobs:
         run: |
           npm install
           node scripts/deploy.mjs | tee /tmp/deploy.log
-          URL=$(grep -oP 'https://\S+' /tmp/deploy.log | tail -1)
+          PROD_URL=$(grep -oP 'Currently on production: \K\S+' /tmp/deploy.log || true)
+          RC_URL=$(grep -oP 'Release candidate: \K\S+' /tmp/deploy.log)
           echo "## Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "$URL" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$PROD_URL" ]; then
+            echo "Currently on production: $PROD_URL" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "Release candidate: $RC_URL" >> $GITHUB_STEP_SUMMARY
