@@ -166,6 +166,7 @@ export class TelegramSession {
       const mode = await this.ctrl.waitForModeSelect();
 
       if (mode === 'user') {
+        this.isSessionActive = true;
         await startBotFlow(send, this.ctrl);
         return; // onBotMessage handles the rest
       }
