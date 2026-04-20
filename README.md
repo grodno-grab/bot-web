@@ -113,7 +113,11 @@ The repository includes a GitHub Actions workflow (`.github/workflows/build.yml`
 3. Runs the build inside Docker
 4. Prints the SHA-256 hash of `dist/index.html`
 5. Uploads `index.html` as a downloadable artifact
-6. Deploys to Google Cloud Storage and posts the versioned URL to the job summary
+6. Deploys to Google Cloud Storage and posts the versioned URLs to the job summary
+
+The job summary shows two URLs:
+- **Currently on production** — the URL currently stored in `config.json` (the live version)
+- **Release candidate** — the freshly uploaded versioned URL
 
 Configure all `VITE_*` variables in the repository settings before triggering the workflow.
 For automatic deployment, also set the following in repository settings:
@@ -125,3 +129,15 @@ For automatic deployment, also set the following in repository settings:
 | `GCS_CREDENTIALS` | Secret | JSON service-account key with write access |
 
 All three GCS settings must be configured; if any is missing the deploy step fails the workflow.
+
+### Version retention and stale URL cleanup
+
+The deploy script (`scripts/deploy.mjs`) performs two cleanup passes on every run:
+
+**1. Object version pruning** — after uploading a new version of `GCS_OBJECT`, the script reads `config.json` to determine the currently live production URL, then deletes every other version of `GCS_OBJECT` from the bucket. Only two versions are kept: the newly uploaded one and the one currently referenced by `config.json`. This prevents unbounded version accumulation while preserving the ability to roll back.
+
+**2. Config version audit** — the script iterates over all stored versions of `config.json` and inspects the `url` field in each. Any URL that is neither the current production URL nor the new release candidate URL is treated as stale:
+- If it points to an object in the same GCS bucket, the script deletes that object.
+- If it points elsewhere, the script verifies it returns HTTP 404; if not, it is printed as an error and the process exits with code 1, requiring manual intervention.
+
+`config.json` is a small JSON file stored in the same GCS bucket. It must contain a `url` field pointing to the currently active versioned URL of `GCS_OBJECT`. The deploy script reads it before uploading and uses it to decide which old versions to keep.
