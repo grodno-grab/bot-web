@@ -1,8 +1,9 @@
 /* ─── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   --tg-bg:               #212121;
   --tg-bg-secondary:     #0f0f0f;
+  --tg-body-bg:          #141414;
   --tg-surface:          #2b2b2b;
   --tg-surface-hover:    #363636;
   --tg-primary:          #3390ec;
@@ -13,12 +14,15 @@
   --tg-text:             #ffffff;
   --tg-text-secondary:   #aaaaaa;
   --tg-text-hint:        #707579;
+  --tg-visited:          #7ab8f5;
   --tg-divider:          rgba(255,255,255,0.08);
   --tg-input-bg:         #1a1a1a;
   --tg-input-border:     #3a3a3a;
   --tg-input-focus:      #3390ec;
   --tg-error:            #ef5350;
   --tg-success:          #4caf50;
+  --tg-scrollbar:        #444;
+  --tg-scrollbar-hover:  #666;
   --tg-radius-btn:       22px;
   --tg-radius-input:     10px;
   --tg-radius-card:      12px;
@@ -26,21 +30,49 @@
   --tg-transition:       0.2s ease;
 }
 
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --tg-bg:               #ffffff;
+    --tg-bg-secondary:     #f4f4f5;
+    --tg-body-bg:          #f4f4f5;
+    --tg-surface:          #f8f8f8;
+    --tg-surface-hover:    #ebebeb;
+    --tg-primary:          #3390ec;
+    --tg-primary-hover:    #2b7cd3;
+    --tg-primary-disabled: #a8d0f5;
+    --tg-danger:           #e53935;
+    --tg-danger-hover:     #c62828;
+    --tg-text:             #000000;
+    --tg-text-secondary:   #707579;
+    --tg-text-hint:        #aaaaaa;
+    --tg-visited:          #2b7cd3;
+    --tg-divider:          rgba(0,0,0,0.08);
+    --tg-input-bg:         #ffffff;
+    --tg-input-border:     #d0d0d0;
+    --tg-input-focus:      #3390ec;
+    --tg-error:            #ef5350;
+    --tg-success:          #4caf50;
+    --tg-scrollbar:        #bbb;
+    --tg-scrollbar-hover:  #999;
+  }
+}
+
 /* ─── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #444 transparent;
+  scrollbar-color: var(--tg-scrollbar) transparent;
   -webkit-tap-highlight-color: transparent;
 }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #444;
+  background: var(--tg-scrollbar);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover { background: #666; }
+::-webkit-scrollbar-thumb:hover { background: var(--tg-scrollbar-hover); }
 
 /* ─── Base ───────────────────────────────────────────────────────────────────── */
 body {
@@ -48,14 +80,14 @@ body {
   padding: 0;
   height: var(--viewport-height, 100svh);
   overflow: hidden;
-  background: #141414;
+  background: var(--tg-body-bg);
   font-family: -apple-system, BlinkMacSystemFont, 'Roboto', 'Segoe UI', system-ui, sans-serif;
   color: var(--tg-text);
   font-size: 1rem;
 }
 
 a { color: var(--tg-primary); }
-a:visited { color: #7ab8f5; }
+a:visited { color: var(--tg-visited); }
 
 ol, ul { padding-left: 20px; margin: 6px 0 14px; }
 li { margin-bottom: 6px; line-height: 1.55; }
