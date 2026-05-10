@@ -55,9 +55,11 @@ export async function handleBotMessage(
 ): Promise<number[] | 'back'> {
   const data = await fetchAndDecrypt(msg, send, ctrl);
   const resolved = await resolveAllChats(data, send, ctrl);
+  await verifyMessages(resolved, send, ctrl);
+  const verifiedResolved = resolved.filter(r => !r.chat || r.entry.message_ids.length > 0);
 
   while (true) {
-    const chatItems = resolved.map(r => ({
+    const chatItems = verifiedResolved.map(r => ({
       chatId: r.entry.chat_id,
       displayName: r.displayName,
       messageCount: r.entry.message_ids.length,
@@ -65,7 +67,7 @@ export async function handleBotMessage(
     }));
     const selectedIds = await ctrl.waitForChatSelect(chatItems);
     if (selectedIds === null) return 'back';
-    const filtered = resolved.filter(r => selectedIds.has(r.entry.chat_id));
+    const filtered = verifiedResolved.filter(r => selectedIds.has(r.entry.chat_id));
     const summary = {
       totalMessages: filtered.reduce((s, r) => s + r.entry.message_ids.length, 0),
       chatNames: filtered.map(r => r.displayName),
@@ -155,6 +157,25 @@ async function resolveAllChats(
   return results;
 }
 
+async function verifyMessages(
+  resolved: ResolvedEntry[],
+  send: TdSend,
+  ctrl: TelegramController,
+): Promise<void> {
+  ctrl.showWorking('Проверка сообщений…');
+  for (const { entry, chat } of resolved) {
+    if (!chat) continue;
+    const messageIds = entry.message_ids.map(id => id * TDLIB_MESSAGE_ID_MULTIPLIER);
+    const result = await send('getMessages', { chat_id: chat.id, message_ids: messageIds }) as TdUpdate & { messages?: (TdUpdate | null)[] };
+    const existingIds = new Set(
+      (result.messages ?? [])
+        .filter((m): m is TdUpdate => m !== null)
+        .map(m => (m.id as number) / TDLIB_MESSAGE_ID_MULTIPLIER),
+    );
+    entry.message_ids = entry.message_ids.filter(id => existingIds.has(id));
+  }
+}
+
 async function processChats(
   resolved: ResolvedEntry[],
   send: TdSend,
@@ -173,7 +194,6 @@ async function processChats(
 
     try {
       const messageIds = entry.message_ids.map(id => id * TDLIB_MESSAGE_ID_MULTIPLIER);
-      await send('getMessages', { chat_id: chat.id, message_ids: messageIds });
       await send('deleteMessages', { chat_id: chat.id, message_ids: messageIds, revoke: true });
     } catch (_) {
       failedChatIds.push(entry.chat_id);
