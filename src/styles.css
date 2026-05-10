@@ -198,6 +198,14 @@ li { margin-bottom: 6px; line-height: 1.55; }
   margin-bottom: 24px;
   color: var(--tg-primary);
   flex-shrink: 0;
+  max-height: 200px;
+  overflow: hidden;
+  transition: max-height 300ms ease, margin-bottom 300ms ease, opacity 300ms ease;
+}
+.auth-screen-icon--hidden {
+  max-height: 0;
+  margin-bottom: 0;
+  opacity: 0;
 }
 
 .auth-screen-title {

@@ -280,8 +280,9 @@ export function App() {
   const { screen, prevScreen } = state;
   const headerConfig = getHeaderConfig(screen);
   const isIntro = screen === 'intro';
+  const isAuthScreen = screen === 'phone' || screen === 'code' || screen === 'password';
   const isDoneWorking = screen === 'working' && !state.workingSpinner;
-  const showFooterCancel = !isIntro;
+  const showFooterCancel = !isIntro && !isAuthScreen;
 
   // Determine transition direction
   const prevIdx = prevScreen ? SCREEN_ORDER.indexOf(prevScreen) : -1;
@@ -294,10 +295,12 @@ export function App() {
 
   return (
     <div id="app">
-      <Header
-        title={headerConfig.title}
-        onBack={headerConfig.showBack ? handleBack : undefined}
-      />
+      {!isAuthScreen && (
+        <Header
+          title={headerConfig.title}
+          onBack={headerConfig.showBack ? handleBack : undefined}
+        />
+      )}
 
       <div class="app-content">
         <div class={transitionClass} key={screen}>

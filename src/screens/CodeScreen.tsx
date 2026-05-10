@@ -12,6 +12,7 @@ export function CodeScreen({ onSubmit }: Props) {
   const [error, setError] = useState('');
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
+  const [iconVisible, setIconVisible] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -43,7 +44,7 @@ export function CodeScreen({ onSubmit }: Props) {
 
   return (
     <div class="auth-screen">
-      <div class="auth-screen-icon">
+      <div class={`auth-screen-icon${iconVisible ? '' : ' auth-screen-icon--hidden'}`}>
         <IconMessage size={96} color="var(--tg-primary)" />
       </div>
       <h1 class="auth-screen-title">Код для входа</h1>
@@ -73,8 +74,8 @@ export function CodeScreen({ onSubmit }: Props) {
             value={value}
             disabled={loading}
             onInput={handleInput}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onFocus={() => { setFocused(true); setIconVisible(false); }}
+            onBlur={() => { setFocused(false); setIconVisible(true); }}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
             style="position:absolute;inset:0;opacity:0;cursor:default;width:100%;height:100%"
           />

@@ -8,6 +8,7 @@ interface Props {
 export function PhoneScreen({ onSubmit }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [iconVisible, setIconVisible] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -26,7 +27,7 @@ export function PhoneScreen({ onSubmit }: Props) {
 
   return (
     <div class="auth-screen">
-      <div class="auth-screen-icon">
+      <div class={`auth-screen-icon${iconVisible ? '' : ' auth-screen-icon--hidden'}`}>
         <IconPhone size={96} color="var(--tg-primary)" />
       </div>
       <h1 class="auth-screen-title">Вход в Telegram</h1>
@@ -40,6 +41,8 @@ export function PhoneScreen({ onSubmit }: Props) {
             type="tel"
             placeholder=" "
             autocomplete="off"
+            onFocus={() => setIconVisible(false)}
+            onBlur={() => setIconVisible(true)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
           />
           <label>Номер телефона</label>

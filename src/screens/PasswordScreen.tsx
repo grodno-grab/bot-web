@@ -10,6 +10,7 @@ export function PasswordScreen({ hint, onSubmit }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [iconVisible, setIconVisible] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -32,7 +33,7 @@ export function PasswordScreen({ hint, onSubmit }: Props) {
 
   return (
     <div class="auth-screen">
-      <div class="auth-screen-icon">
+      <div class={`auth-screen-icon${iconVisible ? '' : ' auth-screen-icon--hidden'}`}>
         <IconLock size={96} color="var(--tg-primary)" />
       </div>
       <h1 class="auth-screen-title">Введите пароль</h1>
@@ -45,6 +46,8 @@ export function PasswordScreen({ hint, onSubmit }: Props) {
             placeholder=" "
             class="has-toggle"
             autocomplete="off"
+            onFocus={() => setIconVisible(false)}
+            onBlur={() => setIconVisible(true)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
           />
           <label>Пароль</label>
