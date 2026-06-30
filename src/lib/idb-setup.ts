@@ -1,5 +1,3 @@
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
-
 // Keeps the app ephemeral: all web storage is replaced with in-memory shims, so a
 // session leaves nothing on disk.
 
@@ -20,10 +18,26 @@ function createMemoryStorage(): Storage {
 Object.defineProperty(window, 'localStorage',   { value: createMemoryStorage(), configurable: true });
 Object.defineProperty(window, 'sessionStorage', { value: createMemoryStorage(), configurable: true });
 
-// ── in-memory IndexedDB (main thread) ─────────────────────────────────────────
+// ── no-op IndexedDB (main thread) ─────────────────────────────────────────────
 
-Object.defineProperty(window, 'indexedDB', { value: new IDBFactory(), configurable: true });
-Object.defineProperty(window, 'IDBKeyRange', { value: IDBKeyRange, configurable: true });
+// The mtcute client runs on MemoryStorage and never opens IndexedDB (only
+// @mtcute/web's unused IdbStorageDriver would). This stub stands in purely to
+// guarantee ephemerality — no library/app code can persist to disk — without
+// bundling the full ~141 KB fake-indexeddb implementation.
+const noopRequest = (): IDBOpenDBRequest => ({
+  onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null,
+  result: undefined, error: null, readyState: 'pending',
+  addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+} as unknown as IDBOpenDBRequest);
+
+const memoryIndexedDB = {
+  open: noopRequest,
+  deleteDatabase: noopRequest,
+  databases: async () => [],
+  cmp: () => 0,
+} as unknown as IDBFactory;
+
+Object.defineProperty(window, 'indexedDB', { value: memoryIndexedDB, configurable: true });
 
 // ── in-memory CacheStorage ────────────────────────────────────────────────────
 

@@ -35,7 +35,7 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 | UI | [Preact](https://preactjs.com/) + TypeScript |
 | Build | [Vite](https://vitejs.dev/) + [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) |
 | Crypto | Web Crypto API — AES-CBC with a SHA-256 derived key |
-| Output | Single self-contained `dist/index.html` (~1.5 MB, all assets inlined) |
+| Output | Single self-contained `dist/index.html` (~1.1 MB, ~280 KB gzipped; all assets inlined) |
 
 ## Development
 

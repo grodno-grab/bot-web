@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyPatch } from './patch-deps.mjs';
+import { applyPatch, applyWasmPatch } from './patch-deps.mjs';
 
 const FROM = 'Promise.resolve().then(() => __importStar(require("zimmerframe")))';
 const TO = 'import("zimmerframe")';
@@ -32,6 +32,29 @@ describe('applyPatch', () => {
   it('is idempotent', () => {
     const once = applyPatch(`x ${FROM} y`).src;
     expect(applyPatch(once).changed).toBe(false);
+  });
+});
+
+describe('applyWasmPatch', () => {
+  const WASM_SRC = 'if (s) return new URL("./mtcute-simd.wasm", import.meta.url);\nreturn new URL("./mtcute.wasm", import.meta.url);';
+
+  it('points the SIMD wasm URL at the non-SIMD blob', () => {
+    const { changed, src } = applyWasmPatch(WASM_SRC);
+    expect(changed).toBe(true);
+    expect(src).not.toContain('mtcute-simd.wasm');
+    expect(src).toContain('./mtcute.wasm');
+  });
+
+  it('is a no-op when the SIMD reference is absent (already patched)', () => {
+    const src = 'return new URL("./mtcute.wasm", import.meta.url);';
+    const out = applyWasmPatch(src);
+    expect(out.changed).toBe(false);
+    expect(out.src).toBe(src);
+  });
+
+  it('is idempotent', () => {
+    const once = applyWasmPatch(WASM_SRC).src;
+    expect(applyWasmPatch(once).changed).toBe(false);
   });
 });
 
@@ -67,5 +90,17 @@ describe('patch-deps CLI (main)', () => {
   it('exits cleanly when the target file is absent', () => {
     expect(() => run()).not.toThrow();
     expect(existsSync(join(dir, TARGET_REL))).toBe(false);
+  });
+
+  it('patches @mtcute/wasm so only the non-SIMD blob remains', () => {
+    const WASM_REL = 'node_modules/@mtcute/wasm/index.js';
+    mkdirSync(join(dir, 'node_modules/@mtcute/wasm'), { recursive: true });
+    writeFileSync(join(dir, WASM_REL),
+      'new URL("./mtcute-simd.wasm", import.meta.url); new URL("./mtcute.wasm", import.meta.url);');
+    const out = run();
+    const patched = readFileSync(join(dir, WASM_REL), 'utf8');
+    expect(patched).not.toContain('mtcute-simd.wasm');
+    expect(patched).toContain('./mtcute.wasm');
+    expect(out).toMatch(/@mtcute\/wasm/);
   });
 });

@@ -13,7 +13,7 @@
  *   • chat ids    — TDLib/bot-API marked ids (-100… for channels) == mtcute marked ids.
  */
 import {
-  TelegramClient,
+  BaseTelegramClient,
   MemoryStorage,
   Long,
   getMarkedPeerId,
@@ -21,6 +21,12 @@ import {
   tl,
 } from '@mtcute/web';
 import type { Chat } from '@mtcute/web';
+// Tree-shakable standalone methods: importing only the ~11 we use lets the bundler
+// drop the ~300+ high-level methods that the all-in-one TelegramClient would pull in.
+import {
+  sendCode, signIn, checkPassword, getPasswordHint, getMe,
+  resolvePeer, resolveUser, getChat, sendText, iterDialogs, logOut,
+} from '@mtcute/web/methods.js';
 
 type TdObject = Record<string, unknown>;
 
@@ -180,7 +186,7 @@ interface TdClientOptions {
 export class TdAdapter {
   onUpdate: ((update: TdObject) => void) | null = null;
 
-  private client: TelegramClient | null = null;
+  private client: BaseTelegramClient | null = null;
   private phone = '';
   private phoneCodeHash = '';
   private loggedOut = false;
@@ -257,7 +263,7 @@ export class TdAdapter {
 
   private async setTdlibParameters(p: TdObject): Promise<TdObject> {
     const lang = String(p.system_language_code || 'en');
-    this.client = new TelegramClient({
+    this.client = new BaseTelegramClient({
       apiId: num(p.api_id),
       apiHash: String(p.api_hash),
       storage: new MemoryStorage(), // ephemeral: the app wipes all storage on exit anyway
@@ -290,7 +296,7 @@ export class TdAdapter {
     dlog('sendCode → connecting and requesting code for', this.phone);
     let sent;
     try {
-      sent = await this.tg.sendCode({ phone: this.phone });
+      sent = await sendCode(this.tg,{ phone: this.phone });
     } catch (e) {
       console.error('[td-adapter] sendCode FAILED:', e);
       throw new Error(humanizeAuthError(e));
@@ -307,12 +313,12 @@ export class TdAdapter {
 
   private async submitCode(p: TdObject): Promise<TdObject> {
     try {
-      await this.tg.signIn({ phone: this.phone, phoneCodeHash: this.phoneCodeHash, phoneCode: String(p.code) });
+      await signIn(this.tg,{ phone: this.phone, phoneCodeHash: this.phoneCodeHash, phoneCode: String(p.code) });
       this.onAuthorized();
     } catch (e) {
       if (!is2FANeeded(e)) { console.error('[td-adapter] signIn FAILED:', e); throw new Error(humanizeAuthError(e)); }
       dlog('2FA password required');
-      const hint = await this.tg.getPasswordHint().catch(() => null);
+      const hint = await getPasswordHint(this.tg).catch(() => null);
       this.emitLater(authState('authorizationStateWaitPassword', { password_hint: hint ?? '' }));
     }
     return {};
@@ -320,7 +326,7 @@ export class TdAdapter {
 
   private async submitPassword(p: TdObject): Promise<TdObject> {
     try {
-      await this.tg.checkPassword(String(p.password));
+      await checkPassword(this.tg,String(p.password));
     } catch (e) {
       console.error('[td-adapter] checkPassword FAILED:', e);
       throw new Error(humanizeAuthError(e));
@@ -338,12 +344,12 @@ export class TdAdapter {
   private async logOut(): Promise<TdObject> {
     if (this.loggedOut) return {};
     this.loggedOut = true;
-    try { await this.client?.logOut(); } catch { /* best-effort */ }
+    try { if (this.client) await logOut(this.client); } catch { /* best-effort */ }
     return {};
   }
 
   private async getMe(): Promise<TdObject> {
-    const me = await this.tg.getMe();
+    const me = await getMe(this.tg);
     return { id: me.id };
   }
 
@@ -351,13 +357,13 @@ export class TdAdapter {
 
   private async searchPublicChat(p: TdObject): Promise<TdObject> {
     const username = String(p.username);
-    const peer = await this.tg.resolvePeer(username);
+    const peer = await resolvePeer(this.tg,username);
     // A bot/user (e.g. FindMessagesBot) — mtcute getChat rejects users, and TDLib
     // represents it as a private chat whose id equals the user id (positive).
     if (peer._ === 'inputPeerUser') {
       return { id: peer.userId, title: username, type: { '@type': 'chatTypePrivate', user_id: peer.userId } };
     }
-    const chat = await this.tg.getChat(username);
+    const chat = await getChat(this.tg,username);
     this.chatCache.set(chat.id, chat);
     return mapChat(chat);
   }
@@ -372,7 +378,7 @@ export class TdAdapter {
     // The app loops loadChats until it throws; fetch once, then signal "no more".
     if (this.loadedFolders.has(folder)) throw new Error('no more chats to load');
     const ids: number[] = [];
-    for await (const dialog of this.tg.iterDialogs({ archived: folder === 'archive' ? 'only' : 'exclude' })) {
+    for await (const dialog of iterDialogs(this.tg,{ archived: folder === 'archive' ? 'only' : 'exclude' })) {
       const peer = dialog.peer;
       ids.push(peer.id);
       // Cache the full Chat (supergroups/channels) so getChat avoids a round-trip;
@@ -410,7 +416,7 @@ export class TdAdapter {
   }
 
   private async getUser(userId: number): Promise<TdObject> {
-    const input = await this.tg.resolveUser(userId);
+    const input = await resolveUser(this.tg,userId);
     const [user] = await this.tg.call({ _: 'users.getUsers', id: [input] });
     const isBot = user._ === 'user' && !!user.bot;
     return { type: { '@type': isBot ? 'userTypeBot' : 'userTypeRegular' } };
@@ -418,7 +424,7 @@ export class TdAdapter {
 
   private async getChatMember(p: TdObject): Promise<TdObject> {
     const channel = await this.inputChannel(num(p.chat_id));
-    const participant = await this.tg.resolvePeer(num((p.member_id as TdObject).user_id));
+    const participant = await resolvePeer(this.tg,num((p.member_id as TdObject).user_id));
     const res = await this.tg.call({ _: 'channels.getParticipant', channel, participant });
     return { status: mapMemberStatus(res.participant) };
   }
@@ -442,7 +448,7 @@ export class TdAdapter {
   // ─── Messages ─────────────────────────────────────────────────────────────────
 
   private async getChatHistory(p: TdObject): Promise<TdObject> {
-    const peer = await this.tg.resolvePeer(num(p.chat_id));
+    const peer = await resolvePeer(this.tg,num(p.chat_id));
     // TDLib from_message_id is exclusive and lives in server_id<<20 space; the admin
     // scan passes endMsg.id+1 to *include* the boundary message. getHistory.offsetId is
     // exclusive in server-id space, so convert with ceil (matches floor for clean ids
@@ -463,7 +469,7 @@ export class TdAdapter {
   }
 
   private async getChatMessageByDate(p: TdObject): Promise<TdObject> {
-    const peer = await this.tg.resolvePeer(num(p.chat_id));
+    const peer = await resolvePeer(this.tg,num(p.chat_id));
     const res = await this.tg.call({
       _: 'messages.getHistory',
       peer,
@@ -494,13 +500,13 @@ export class TdAdapter {
   private async sendMessage(p: TdObject): Promise<TdObject> {
     const content = p.input_message_content as TdObject | undefined;
     const text = String((content?.text as TdObject | undefined)?.text ?? '');
-    await this.tg.sendText(num(p.chat_id), text);
+    await sendText(this.tg,num(p.chat_id), text);
     return {};
   }
 
   private async sendBotStartMessage(p: TdObject): Promise<TdObject> {
-    const bot = await this.tg.resolveUser(num(p.bot_user_id));
-    const peer = await this.tg.resolvePeer(num(p.chat_id));
+    const bot = await resolveUser(this.tg,num(p.bot_user_id));
+    const peer = await resolvePeer(this.tg,num(p.chat_id));
     const since = await this.latestServerMessageId(peer);
     await this.tg.call({
       _: 'messages.startBot',
@@ -530,7 +536,7 @@ export class TdAdapter {
 
   private async deleteChatMessagesBySender(p: TdObject): Promise<TdObject> {
     const channel = await this.inputChannel(num(p.chat_id));
-    const participant = await this.tg.resolvePeer(num((p.sender_id as TdObject).user_id));
+    const participant = await resolvePeer(this.tg,num((p.sender_id as TdObject).user_id));
     await this.tg.call({ _: 'channels.deleteParticipantHistory', channel, participant });
     return {};
   }
@@ -542,14 +548,14 @@ export class TdAdapter {
   }
 
   private async unblockSender(p: TdObject): Promise<TdObject> {
-    const id = await this.tg.resolvePeer(num((p.sender_id as TdObject).user_id));
+    const id = await resolvePeer(this.tg,num((p.sender_id as TdObject).user_id));
     try { await this.tg.call({ _: 'contacts.unblock', id }); } catch { /* not blocked → fine */ }
     return {};
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────────
 
-  private get tg(): TelegramClient {
+  private get tg(): BaseTelegramClient {
     if (!this.client) throw new Error('TDLib parameters not set yet');
     return this.client;
   }
@@ -595,7 +601,7 @@ export class TdAdapter {
   private async resolveChat(tdChatId: number): Promise<Chat> {
     const cached = this.chatCache.get(tdChatId);
     if (cached) return cached;
-    const chat = await this.tg.getChat(tdChatId);
+    const chat = await getChat(this.tg,tdChatId);
     this.chatCache.set(chat.id, chat);
     return chat;
   }
@@ -611,7 +617,7 @@ export class TdAdapter {
   }
 
   private async inputChannel(tdChatId: number): Promise<tl.TypeInputChannel> {
-    const peer = await this.tg.resolvePeer(tdChatId);
+    const peer = await resolvePeer(this.tg,tdChatId);
     if (peer._ === 'inputPeerChannel') {
       return { _: 'inputChannel', channelId: peer.channelId, accessHash: peer.accessHash };
     }
