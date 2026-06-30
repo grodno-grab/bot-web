@@ -13,8 +13,6 @@ const VITE_ENV = {
   VITE_BOT_START_PARAMETER: 'wtg',
   VITE_BOT_COMMAND_SUCCESS: '/wtg_done',
   VITE_BOT_COMMAND_FAILURE: '/wtg_fail',
-  // Disable inlining the real tdweb bundle so e2e can serve a fake one.
-  E2E_FAKE_TDWEB: '1',
 };
 
 export default defineConfig({
@@ -33,8 +31,8 @@ export default defineConfig({
     { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
-    // `npx vite` directly bypasses the `prestart` hook (which requires a built
-    // tdlib bundle); the e2e tests serve a fake /tdweb.inlined.js via routing.
+    // e2e injects a fake tdweb client via addInitScript (see e2e/fixtures/setup.ts),
+    // which wins over the real adapter registered by main.tsx (`globalThis.tdweb ??=`).
     command: `npx vite --port ${PORT} --strictPort`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,

@@ -1,8 +1,8 @@
 /*
- * Browser-side fake of the `tdweb` global used by the app. Served in place of
- * the real /tdweb.inlined.js during e2e. Behaviour is driven by plain data in
- * window.__TD_CONFIG__ (set via addInitScript). Mirrors test/helpers/adminWorld
- * + tdSimulator so the real app can run end-to-end without TDLib/WASM.
+ * Browser-side fake of the `tdweb` global, injected via addInitScript in e2e (see
+ * fixtures/setup.ts) so it wins over the real adapter. Behaviour is driven by plain
+ * data in window.__TD_CONFIG__. Mirrors test/helpers/adminWorld + tdSimulator so the
+ * app can run end-to-end without a real Telegram connection.
  */
 (function () {
   var cfg = window.__TD_CONFIG__ || {};

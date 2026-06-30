@@ -14,8 +14,8 @@ the user chooses one of two modes:
 
 1. The page starts `@FindMessagesBot` with a deep-link parameter (`/start wtg`).
 2. The bot replies with an AES-CBC-encrypted document containing the list of chats and message IDs to delete.
-3. The user confirms deletion; the page calls `deleteMessages` for each chat via TDLib.
-4. The bot is notified of the result (`/wtg_done` or `/wtg_fail`), TDLib logs out, and all browser storage (localStorage, sessionStorage, IndexedDB) is wiped.
+3. The user confirms deletion; the page calls `deleteMessages` for each chat.
+4. The bot is notified of the result (`/wtg_done` or `/wtg_fail`), the Telegram session is logged out, and all browser storage (localStorage, sessionStorage, IndexedDB) is wiped.
 
 ### Mode 2 — Delete messages as a chat administrator
 
@@ -23,7 +23,7 @@ the user chooses one of two modes:
 2. The user picks a chat and enters a date range (dd.mm.yyyy).
 3. The page scans the chat history for that period and calls `deleteChatMessagesBySender` for every non-bot participant who wrote at least one message in the range. This deletes **all** messages from each such user in the chat, including messages outside the specified dates.
 4. One or more verification passes are performed to catch anything missed.
-5. The user can then pick another chat or finish. On finish TDLib logs out and all browser storage is wiped.
+5. The user can then pick another chat or finish. On finish the session is logged out and all browser storage is wiped.
 
 Everything runs **locally inside the browser**. No data is sent to any third-party server.
 
@@ -31,31 +31,27 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 
 | Layer | Technology |
 |-------|-----------|
-| Telegram MTProto | [TDLib](https://github.com/grodno-grab/tdlib-account-export) compiled to WebAssembly (`tdweb`) |
+| Telegram MTProto | [mtcute](https://mtcute.dev) — pure-JavaScript MTProto client |
 | UI | [Preact](https://preactjs.com/) + TypeScript |
 | Build | [Vite](https://vitejs.dev/) + [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) |
 | Crypto | Web Crypto API — AES-CBC with a SHA-256 derived key |
-| Output | Single self-contained `dist/index.html` (~20 MB, all assets inlined) |
+| Output | Single self-contained `dist/index.html` (~1.5 MB, all assets inlined) |
 
 ## Development
 
-Local development requires `public/tdweb.inlined.js` to be present (it contains the TDLib
-WebAssembly runtime and is built by Docker Stage 1 — see Production build below).
-
 ```sh
-# 1. Get public/tdweb.inlined.js from a prior Docker build or build it yourself (see below)
-# 2. Install dependencies and start the dev server
 npm install
 npm start
 ```
 
+Put your Telegram API credentials in `.env.local` (see [Configuration](#configuration)).
+
 ## Production build
 
-The entire build runs inside Docker for byte-reproducible output.
-Stage 1 compiles TDLib from source (~30–60 min on first run); Stage 2 runs Vite.
+The build runs inside Docker for reproducible output:
 
 ```sh
-# Build the Docker image (includes full TDLib compilation)
+# Build the Docker image
 docker build -t bot-web .
 
 # Run the build — output lands in ./dist/index.html

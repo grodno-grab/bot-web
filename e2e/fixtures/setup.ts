@@ -39,9 +39,9 @@ export async function installFakeTdweb(page: Page, config: TdConfig, opts: { doc
     (window as unknown as { __TD_CONFIG__: unknown }).__TD_CONFIG__ = cfg;
   }, config);
 
-  await page.route('**/tdweb.inlined.js', (route) =>
-    route.fulfill({ contentType: 'application/javascript', body: fakeTdwebSource }),
-  );
+  // The real client is now registered by main.tsx as `globalThis.tdweb ??= …`,
+  // so inject the fake as an init script (runs first) to take precedence.
+  await page.addInitScript({ content: fakeTdwebSource });
 
   if (opts.doc) {
     const body = await encryptBotDoc(opts.doc.userId, opts.doc.key, JSON.stringify(opts.doc.value));

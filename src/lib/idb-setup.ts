@@ -1,5 +1,7 @@
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
-import { WORKER_IDB_CODE } from 'virtual:worker-idb-code';
+
+// Keeps the app ephemeral: all web storage is replaced with in-memory shims, so a
+// session leaves nothing on disk.
 
 // ── in-memory localStorage / sessionStorage ───────────────────────────────────
 
@@ -42,17 +44,3 @@ const memCache: CacheStorage = {
 };
 
 Object.defineProperty(window, 'caches', { value: memCache, configurable: true });
-
-// ── blob-Worker interception: inject fake-indexeddb ───────────────────────────
-
-const _OrigWorker = window.Worker;
-
-window.Worker = class extends _OrigWorker {
-  constructor(url: string | URL, opts?: WorkerOptions) {
-    if (typeof url === 'string' && url.startsWith('blob:')) {
-      const wrapped = `${WORKER_IDB_CODE}\nimportScripts(${JSON.stringify(url)});`;
-      url = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
-    }
-    super(url as string, opts);
-  }
-};

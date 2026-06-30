@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { gzipSync } from 'node:zlib';
+import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 import { Storage } from '@google-cloud/storage';
 import dotenv from 'dotenv';
 import {
@@ -41,7 +41,9 @@ if (SKIP_BUILD !== '1') {
 }
 
 console.log('Compressing dist/index.html...');
-const compressed = gzipSync(readFileSync('dist/index.html'), { level: 9 });
+const compressed = brotliCompressSync(readFileSync('dist/index.html'), {
+  params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 },
+});
 console.log(`Compressed: ${(compressed.length / 1024).toFixed(1)} KB`);
 
 const creds = JSON.parse(process.env.GCS_CREDENTIALS);
@@ -52,7 +54,7 @@ const file = storage.bucket(GCS_BUCKET).file(GCS_OBJECT);
 await file.save(compressed, {
   metadata: {
     contentType: 'text/html; charset=utf-8',
-    contentEncoding: 'gzip',
+    contentEncoding: 'br',
     cacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
   },
 });
