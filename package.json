@@ -8,7 +8,12 @@
     "prestart": "[ -f dist/tdweb.inlined.js ] || (echo 'Error: tdlib not found. Please build it first (see readme)' && exit 1) && cp dist/tdweb.inlined.js public/tdweb.inlined.js",
     "start": "vite",
     "build": "vite build",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "fake-indexeddb": "^6.2.5",
@@ -16,12 +21,19 @@
   },
   "devDependencies": {
     "@google-cloud/storage": "^7.19.0",
+    "@playwright/test": "^1.61.1",
     "@preact/preset-vite": "^2.10.5",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/preact": "^3.2.4",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.5.2",
+    "@vitest/coverage-v8": "^4.1.9",
     "dotenv": "^17.4.0",
     "esbuild": "^0.27.7",
+    "jsdom": "^29.1.1",
     "typescript": "^6.0.2",
     "vite": "^8.0.3",
-    "vite-plugin-singlefile": "^2.3.2"
+    "vite-plugin-singlefile": "^2.3.2",
+    "vitest": "^4.1.9"
   }
 }

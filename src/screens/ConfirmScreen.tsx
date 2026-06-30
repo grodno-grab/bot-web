@@ -1,4 +1,5 @@
 import { IconTrash } from '../components/Icons';
+import { pluralMessages, pluralChatsGenitive } from '../lib/utils';
 import type { ConfirmSummary } from '../lib/types';
 
 interface Props {
@@ -23,7 +24,7 @@ export function ConfirmScreen({ onConfirm, onCancel, summary }: Props) {
           <strong style="color:var(--tg-text)">{summary.totalMessages}</strong>{' '}
           {pluralMessages(summary.totalMessages)} из{' '}
           <strong style="color:var(--tg-text)">{summary.chatNames.length}</strong>{' '}
-          {pluralChats(summary.chatNames.length)}: {summary.chatNames.join(', ')}.
+          {pluralChatsGenitive(summary.chatNames.length)}: {summary.chatNames.join(', ')}.
         </p>
       )}
       <div style="display:flex;gap:12px;width:100%">
@@ -32,20 +33,4 @@ export function ConfirmScreen({ onConfirm, onCancel, summary }: Props) {
       </div>
     </div>
   );
-}
-
-function pluralMessages(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'сообщение';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'сообщения';
-  return 'сообщений';
-}
-
-function pluralChats(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'чат';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'чата';
-  return 'чатов';
 }

@@ -1,8 +1,14 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { gzipSync } from 'node:zlib';
 import { Storage } from '@google-cloud/storage';
 import dotenv from 'dotenv';
+import {
+  parseGeneration,
+  selectVersionsToDelete,
+  parseConfig,
+  classifyConfigUrl,
+} from './deploy-logic.mjs';
 
 dotenv.config({ path: '.env' });
 dotenv.config({ path: '.env.local', override: true });
@@ -55,20 +61,13 @@ const [metadata] = await file.getMetadata();
 const newGeneration = String(metadata.generation);
 const newUrl = `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_OBJECT}?generation=${newGeneration}`;
 
-let productionGeneration = null;
-if (productionUrl) {
-  const match = productionUrl.match(/[?&]generation=(\d+)/);
-  if (match) productionGeneration = match[1];
-}
+const productionGeneration = parseGeneration(productionUrl);
 
 const [allVersions] = await storage.bucket(GCS_BUCKET).getFiles({ prefix: GCS_OBJECT, versions: true });
 const versionsOfObject = allVersions.filter(f => f.name === GCS_OBJECT);
-for (const v of versionsOfObject) {
-  const gen = v.metadata.generation;
-  if (gen !== newGeneration && gen !== productionGeneration) {
-    await v.delete();
-    console.log(`Deleted old version: generation ${gen}`);
-  }
+for (const v of selectVersionsToDelete(versionsOfObject, [newGeneration, productionGeneration])) {
+  await v.delete();
+  console.log(`Deleted old version: generation ${v.metadata.generation}`);
 }
 
 const [remaining] = await storage.bucket(GCS_BUCKET).getFiles({ prefix: GCS_OBJECT, versions: true });
@@ -85,64 +84,46 @@ for (const configVersion of allConfigVersions) {
   const [rawContent] = await configVersion.download();
   let config;
   try {
-    config = JSON.parse(rawContent.toString('utf-8'));
-  } catch {
-    try {
-      config = JSON.parse(gunzipSync(rawContent).toString('utf-8'));
-    } catch (e) {
-      console.log(`Could not parse config.json generation ${configVersion.metadata.generation}: ${e.message}`);
-      continue;
-    }
-  }
-
-  const url = config.url;
-  if (!url || url === productionUrl || url === newUrl) continue;
-
-  let urlObj;
-  try {
-    urlObj = new URL(url);
-  } catch {
-    problemUrls.push(`Invalid URL in config.json: ${url} (Config URL: ${configUrl})`);
+    config = parseConfig(rawContent);
+  } catch (e) {
+    console.log(`Could not parse config.json generation ${configVersion.metadata.generation}: ${e.message}`);
     continue;
   }
 
-  if (urlObj.hostname === 'storage.googleapis.com') {
-    const parts = urlObj.pathname.slice(1).split('/');
-    const urlBucket = parts[0];
-    const urlObject = parts.slice(1).join('/');
-    const urlGeneration = urlObj.searchParams.get('generation');
+  const url = config.url;
+  const decision = classifyConfigUrl(url, { bucket: GCS_BUCKET, productionUrl, newUrl });
 
-    if (!urlGeneration) {
-      problemUrls.push(`No generation parameter in URL: ${url} (Config URL: ${configUrl})`);
-      continue;
-    }
+  if (decision.action === 'skip') continue;
 
-    if (urlBucket === GCS_BUCKET) {
-      try {
-        await storage.bucket(GCS_BUCKET).file(urlObject, { generation: urlGeneration }).delete();
-        console.log(`Deleted stale object: ${url}`);
-      } catch (e) {
-        if (e.code === 404) {
-          console.log(`Already gone: ${url}`);
-        } else {
-          throw e;
-        }
-      }
-    } else {
-      const resp = await fetch(url);
-      if (resp.status !== 404) {
-        problemUrls.push(`${url} (Config URL: ${configUrl})`);
+  if (decision.action === 'problem') {
+    problemUrls.push(
+      decision.kind === 'invalid'
+        ? `Invalid URL in config.json: ${url} (Config URL: ${configUrl})`
+        : `No generation parameter in URL: ${url} (Config URL: ${configUrl})`,
+    );
+    continue;
+  }
+
+  if (decision.action === 'deleteObject') {
+    try {
+      await storage.bucket(GCS_BUCKET).file(decision.object, { generation: decision.generation }).delete();
+      console.log(`Deleted stale object: ${url}`);
+    } catch (e) {
+      if (e.code === 404) {
+        console.log(`Already gone: ${url}`);
       } else {
-        console.log(`Verified 404 (different bucket): ${url}`);
+        throw e;
       }
     }
+    continue;
+  }
+
+  // decision.action === 'verify404'
+  const resp = await fetch(url);
+  if (resp.status !== 404) {
+    problemUrls.push(`${url} (Config URL: ${configUrl})`);
   } else {
-    const resp = await fetch(url);
-    if (resp.status !== 404) {
-      problemUrls.push(`${url} (Config URL: ${configUrl})`);
-    } else {
-      console.log(`Verified 404 (external): ${url}`);
-    }
+    console.log(`Verified 404 (${decision.kind}): ${url}`);
   }
 }
 

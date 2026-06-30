@@ -42,10 +42,16 @@ function workerFakeIdbPlugin(): Plugin {
 function inlineTdwebPlugin(): Plugin {
   return {
     name: 'inline-tdweb',
-    enforce: 'pre', 
+    enforce: 'pre',
     transformIndexHtml(html) {
+      // E2E runs serve a fake tdweb via request interception, so the real
+      // bundle must NOT be inlined into index.html.
+      if (process.env.E2E_FAKE_TDWEB === '1') {
+        return html;
+      }
+
       const filePath = path.resolve(__dirname, 'public/tdweb.inlined.js');
-      
+
       if (!fs.existsSync(filePath)) {
         return html;
       }

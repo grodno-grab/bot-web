@@ -80,8 +80,8 @@ async function runChatDeletionFlow(
 
     const confirmed = await ctrl.waitForAdminConfirm(chat, dates.startDateStr, dates.endDateStr);
     if (confirmed) {
-      const deletedCount = await runAdminDeletion(chat, dates.startTs, dates.endTs, send, ctrl);
-      return ctrl.waitForAdminDone(chat.title, dates.startDateStr, dates.endDateStr, deletedCount);
+      const { deletedUsers, failedCount } = await runAdminDeletion(chat, dates.startTs, dates.endTs, send, ctrl);
+      return ctrl.waitForAdminDone(chat.title, dates.startDateStr, dates.endDateStr, deletedUsers, failedCount);
     }
     // "change period" — re-show date range
   }
@@ -195,13 +195,20 @@ async function isChatPublicOrLinked(chat: TdChat, send: TdSend): Promise<boolean
   }
 }
 
+interface AdminDeletionResult {
+  /** Distinct senders whose messages were swept (the "обработано пользователей" count). */
+  deletedUsers: number;
+  /** Deletions that could not be confirmed (left-over messages + failed sender sweeps). */
+  failedCount: number;
+}
+
 async function runAdminDeletion(
   chat: TdChat,
   startTs: number,
   endTs: number,
   send: TdSend,
   ctrl: TelegramController,
-): Promise<number> {
+): Promise<AdminDeletionResult> {
   const getStartMsgId = async (): Promise<number> => {
     const endMsg = await send('getChatMessageByDate', { chat_id: chat.id, date: endTs }) as TdUpdate & { id: number };
     return endMsg.id + 1;
@@ -211,7 +218,7 @@ async function runAdminDeletion(
   try {
     fromMsgId = await getStartMsgId();
   } catch (_) {
-    return 0;
+    return { deletedUsers: 0, failedCount: 0 };
   }
 
   const maxMsgId = fromMsgId;
@@ -224,11 +231,13 @@ async function runAdminDeletion(
   const adminIds = await fetchPublicAdminIds(chat.id, send);
   const userIds = new Set<number>();
   const botIds = new Set<number>();
+  let failedCount = 0;
 
   for (let pass = 0; pass < MAX_VERIFY_PASSES; pass++) {
     try { await send('resetChatLocalDeletedMessages', { chat_id: chat.id }); } catch (_) {}
-    const found = await scanAndDelete(chat, startTs, endTs, fromMsgId, minMsgId, maxMsgId, userIds, botIds, adminIds, send, ctrl);
-    if (found === 0) break;
+    const { deleted, failed } = await scanAndDelete(chat, startTs, endTs, fromMsgId, minMsgId, maxMsgId, userIds, botIds, adminIds, send, ctrl);
+    failedCount = failed; // only the final pass's residue counts as a real failure
+    if (deleted === 0) break; // nothing new removed this pass → the chat is clean
     try { fromMsgId = await getStartMsgId(); } catch (_) { break; }
   }
 
@@ -240,11 +249,13 @@ async function runAdminDeletion(
           chat_id: chat.id,
           sender_id: { '@type': 'messageSenderUser', user_id: userId },
         });
-      } catch (_) {}
+      } catch (_) {
+        failedCount++; // a sender sweep that throws leaves messages behind
+      }
     }
   }
 
-  return userIds.size;
+  return { deletedUsers: userIds.size, failedCount };
 }
 
 async function fetchPublicAdminIds(chatId: number, send: TdSend): Promise<Set<number>> {
@@ -278,8 +289,9 @@ async function scanAndDelete(
   adminIds: Set<number>,
   send: TdSend,
   ctrl: TelegramController,
-): Promise<number> {
+): Promise<{ deleted: number; failed: number }> {
   let deletedCount = 0;
+  let failedCount = 0;
   let processedCount = 0;
   const rangeSize = maxMsgId - minMsgId;
 
@@ -326,7 +338,9 @@ async function scanAndDelete(
                 userIds.add(userId);
               }
             } catch (_) {
-              botIds.add(userId);
+              // If the user lookup fails, treat the sender as a regular user
+              // (and thus eligible for deletion) rather than silently skipping.
+              userIds.add(userId);
             }
           }
           if (botIds.has(userId)) continue;
@@ -344,7 +358,9 @@ async function scanAndDelete(
     ctrl.showWorking(`Удаление сообщений (${formatMonthYear(batchDate)})…\n~${progress}% · найдено ${processedCount}`);
 
     for (let i = 0; i < batchIds.length; i += DELETE_MESSAGES_BATCH_SIZE) {
-      deletedCount += await ensureMessagesDeleted(chat.id, batchIds.slice(i, i + DELETE_MESSAGES_BATCH_SIZE), send);
+      const res = await ensureMessagesDeleted(chat.id, batchIds.slice(i, i + DELETE_MESSAGES_BATCH_SIZE), send);
+      deletedCount += res.deleted;
+      failedCount += res.failed;
     }
 
     const oldestDate = (messages[messages.length - 1]?.date as number) ?? 0;
@@ -355,10 +371,19 @@ async function scanAndDelete(
     fromMsgId = nextId;
   }
 
-  return deletedCount;
+  return { deleted: deletedCount, failed: failedCount };
 }
 
-async function ensureMessagesDeleted(chatId: number, ids: number[], send: TdSend): Promise<number> {
+/**
+ * Delete a batch of messages, retrying per-message for any that survive, and
+ * report what actually happened: `deleted` is the number verified gone, `failed`
+ * the number still present after all retries (used to surface partial failures).
+ */
+async function ensureMessagesDeleted(
+  chatId: number,
+  ids: number[],
+  send: TdSend,
+): Promise<{ deleted: number; failed: number }> {
   let remaining = ids;
   for (let attempt = 0; attempt < MAX_DELETE_RETRIES && remaining.length > 0; attempt++) {
     if (attempt === 0) {
@@ -379,8 +404,9 @@ async function ensureMessagesDeleted(chatId: number, ids: number[], send: TdSend
         .filter((m): m is TdUpdate => m !== null && !!(m.id as number))
         .map(m => m.id as number);
     } catch (_) {
-      break;
+      // Can't verify — assume the batch is unresolved rather than silently "done".
+      return { deleted: ids.length - remaining.length, failed: remaining.length };
     }
   }
-  return ids.length;
+  return { deleted: ids.length - remaining.length, failed: remaining.length };
 }

@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { Avatar } from '../components/Avatar';
+import { pluralMessages, pluralChats } from '../lib/utils';
 import type { BotChatItem } from '../lib/types';
 
 interface Props {
@@ -78,20 +79,4 @@ export function BotChatSelectScreen({ chats, onProceed, onBack }: Props) {
       </div>
     </div>
   );
-}
-
-function pluralMessages(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'сообщение';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'сообщения';
-  return 'сообщений';
-}
-
-function pluralChats(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'чат';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'чата';
-  return 'чатов';
 }

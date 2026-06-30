@@ -7,19 +7,34 @@
  * See: https://github.com/sveltejs/zimmerframe/pull/34
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const file = 'node_modules/@preact/preset-vite/dist/cjs/transform-hook-names.js';
+const FILE = 'node_modules/@preact/preset-vite/dist/cjs/transform-hook-names.js';
+const FROM = 'Promise.resolve().then(() => __importStar(require("zimmerframe")))';
+const TO = 'import("zimmerframe")';
 
-if (!existsSync(file)) process.exit(0);
-
-const src = readFileSync(file, 'utf8');
-const from = 'Promise.resolve().then(() => __importStar(require("zimmerframe")))';
-const to   = 'import("zimmerframe")';
-
-if (!src.includes(from)) {
-  console.log('patch-deps: @preact/preset-vite already patched');
-  process.exit(0);
+/** Apply the zimmerframe require()→import() patch. Idempotent. */
+export function applyPatch(src) {
+  if (!src.includes(FROM)) return { changed: false, src };
+  return { changed: true, src: src.replace(FROM, TO) };
 }
 
-writeFileSync(file, src.replace(from, to));
-console.log('patch-deps: patched @preact/preset-vite/dist/cjs/transform-hook-names.js');
+/* v8 ignore start */
+// CLI glue (fs/process side effects). Exercised out-of-process by the
+// "patch-deps CLI (main)" subprocess tests, which v8 coverage can't observe.
+function main() {
+  if (!existsSync(FILE)) process.exit(0);
+
+  const { changed, src } = applyPatch(readFileSync(FILE, 'utf8'));
+  if (!changed) {
+    console.log('patch-deps: @preact/preset-vite already patched');
+    process.exit(0);
+  }
+
+  writeFileSync(FILE, src);
+  console.log('patch-deps: patched @preact/preset-vite/dist/cjs/transform-hook-names.js');
+}
+/* v8 ignore stop */
+
+// Only run the side-effecting patch when executed directly (not when imported by tests).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

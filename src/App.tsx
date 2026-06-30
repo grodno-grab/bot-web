@@ -205,14 +205,15 @@ export function App() {
           `включая сообщения за другие даты.`,
       })),
 
-    waitForAdminDone: (chatTitle, startDate, endDate, count) =>
+    waitForAdminDone: (chatTitle, startDate, endDate, count, failedCount) =>
       waitFor<'next' | 'done'>(prev => ({
         ...prev,
         screen: 'admin-done',
         prevScreen: prev.screen,
         adminDoneText:
           `Чат: «${chatTitle}». Период: с ${startDate} по ${endDate}. ` +
-          `Обработано пользователей: ${count}.`,
+          `Обработано пользователей: ${count}.` +
+          (failedCount > 0 ? ' Внимание: часть сообщений удалить не удалось — повторите операцию.' : ''),
       })),
 
   }), [waitFor]);
@@ -244,12 +245,14 @@ export function App() {
     };
     window.addEventListener('pagehide', onUnload);
     window.addEventListener('beforeunload', onUnload);
-    window.addEventListener('pageshow', (e) => {
+    const onPageShow = (e: Event) => {
       if ((e as PageTransitionEvent).persisted) location.reload();
-    });
+    };
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       window.removeEventListener('pagehide', onUnload);
       window.removeEventListener('beforeunload', onUnload);
+      window.removeEventListener('pageshow', onPageShow);
     };
   }, []);
 

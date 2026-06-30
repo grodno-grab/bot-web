@@ -59,7 +59,7 @@ export interface TelegramController {
   waitForDateRange(chatTitle: string, supergroupIdToHide?: number): Promise<DateRange | null>;
   waitForAdminConfirm(chat: TdChat, startDate: string, endDate: string): Promise<boolean>;
   waitForAdminDone(
-    chatTitle: string, startDate: string, endDate: string, count: number,
+    chatTitle: string, startDate: string, endDate: string, count: number, failedCount: number,
   ): Promise<'next' | 'done'>;
 }
 

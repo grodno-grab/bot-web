@@ -24,6 +24,7 @@ export function DateRangeScreen({ chatTitle, defaultFrom = '01.01.2020', default
   const [to, setTo] = useState(defaultTo);
   const [error, setError] = useState('');
   const [membersHidden, setMembersHidden] = useState(false);
+  const [hidingMembers, setHidingMembers] = useState(false);
 
   const handleSubmit = () => {
     const startDay = parseDdMmYyyy(from);
@@ -56,9 +57,15 @@ export function DateRangeScreen({ chatTitle, defaultFrom = '01.01.2020', default
         <div class="hide-members-warning">
           <span>Список участников чата не скрыт</span>
           <button
+            disabled={hidingMembers}
             onClick={async () => {
-              setMembersHidden(true);
-              try { await onHideMembers(); } catch (_) {}
+              setHidingMembers(true);
+              try {
+                await onHideMembers();
+                setMembersHidden(true); // only drop the warning once it actually succeeded
+              } catch (_) {
+                setHidingMembers(false); // keep the warning so the user can retry
+              }
             }}
           >
             Скрыть
