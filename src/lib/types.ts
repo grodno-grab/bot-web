@@ -51,6 +51,7 @@ export interface TelegramController {
   showCodeScreen(): void;
   showPasswordScreen(hint: string): void;
 
+  waitForExportApproval(text: string): Promise<void>;
   waitForChatSelect(chats: BotChatItem[]): Promise<Set<number> | null>;
   waitForConfirm(summary?: ConfirmSummary): Promise<boolean>;
   waitForBotDone(text: string, title?: string): Promise<'back' | 'done'>;

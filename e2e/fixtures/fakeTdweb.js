@@ -64,8 +64,14 @@
       case 'deleteChatMessagesBySender':
       case 'resetChatLocalDeletedMessages':
       case 'toggleSupergroupHasHiddenMembers':
+      case 'finishTakeoutSession':
       case 'logOut':
         return P({});
+
+      // ── account export (takeout) — collectChatsViaExport runs before the bot flow ──
+      case 'initTakeoutSession': return P({ '@type': 'takeoutSession', id: '0' });
+      case 'getLeftChats': return P({ '@type': 'chats', total_count: 0, chat_ids: [] });
+      case 'searchChatMessages': return P({ '@type': 'foundChatMessages', messages: [], next_from_message_id: 0 });
 
       case 'getMessages':
         return admin ? P({ messages: [] }) : P({ messages: (p.message_ids || []).map(function (id) { return { id: id }; }) });
@@ -83,6 +89,7 @@
       // ── admin discovery ──
       case 'loadChats': return Rej('no more chats');
       case 'getChats':
+        if (!admin) return P({ chat_ids: [] });
         return P({ chat_ids: p.chat_list && p.chat_list['@type'] === 'chatListArchive' ? (admin.archiveIds || []) : admin.chatIds });
       case 'getChatMember': {
         var chat = aChat(p.chat_id);
@@ -106,6 +113,7 @@
       }
       case 'getChatHistory': {
         var hc = aChat(p.chat_id);
+        if (!hc) return P({ messages: [] });
         var msgs = (hc.history || [])
           .filter(function (m) { return m.id < p.from_message_id; })
           .sort(function (a, b) { return b.id - a.id; })

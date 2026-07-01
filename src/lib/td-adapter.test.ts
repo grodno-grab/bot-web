@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Long } from '@mtcute/web';
 import {
   toTdMessageId,
   toServerMessageId,
@@ -8,6 +9,7 @@ import {
   mapSender,
   mapReplyMarkup,
   mapMessageRaw,
+  mapLeftChats,
   humanizeAuthError,
 } from './td-adapter';
 
@@ -130,5 +132,70 @@ describe('humanizeAuthError', () => {
     expect(humanizeAuthError({ text: 'PHONE_NUMBER_INVALID' })).toMatch(/Неверный номер/);
     expect(humanizeAuthError({ text: 'API_ID_INVALID' })).toMatch(/api_id/);
     expect(humanizeAuthError(new Error('SOMETHING_ELSE'))).toBe('SOMETHING_ELSE');
+  });
+});
+
+describe('mapMessageRaw forward/reply origin (used by export-flow "replies" scan)', () => {
+  it('exposes the forward source chat_id (savedFromPeer preferred over fromId)', () => {
+    const td = mapMessageRaw(raw({
+      _: 'message', id: 1, peerId: { _: 'peerUser', userId: 777 }, date: 1, message: '',
+      fwdFrom: { _: 'messageFwdHeader', savedFromPeer: { _: 'peerChannel', channelId: 555 }, fromId: { _: 'peerUser', userId: 9 } },
+    })) as Record<string, any>;
+    expect(td.forward_info).toEqual({ source: { chat_id: channelToTdChatId(555) } });
+  });
+  it('falls back to fwdFrom.fromId when there is no savedFromPeer', () => {
+    const td = mapMessageRaw(raw({
+      _: 'message', id: 1, peerId: { _: 'peerUser', userId: 777 }, date: 1, message: '',
+      fwdFrom: { _: 'messageFwdHeader', fromId: { _: 'peerChat', chatId: 42 } },
+    })) as Record<string, any>;
+    expect(td.forward_info).toEqual({ source: { chat_id: -42 } });
+  });
+  it('exposes reply_to chat_id from a messageReplyHeader', () => {
+    const td = mapMessageRaw(raw({
+      _: 'message', id: 1, peerId: { _: 'peerUser', userId: 777 }, date: 1, message: '',
+      replyTo: { _: 'messageReplyHeader', replyToPeerId: { _: 'peerChannel', channelId: 88 } },
+    })) as Record<string, any>;
+    expect(td.reply_to).toEqual({ chat_id: channelToTdChatId(88) });
+  });
+  it('leaves forward_info/reply_to undefined for a plain message', () => {
+    const td = mapMessageRaw(raw({
+      _: 'message', id: 1, peerId: { _: 'peerUser', userId: 777 }, date: 1, message: 'hi',
+    })) as Record<string, any>;
+    expect(td.forward_info).toBeUndefined();
+    expect(td.reply_to).toBeUndefined();
+  });
+});
+
+describe('mapLeftChats (channels.getLeftChannels → TDLib chats)', () => {
+  // getLeftChannels returns full channel objects (with accessHash); Chat.id needs it.
+  const chan = (id: number, title: string) =>
+    raw({ _: 'channel', id, title, accessHash: Long.fromNumber(id), broadcast: true });
+
+  it('maps a chatsSlice: marked channel ids + server total_count, skipping non-channels', () => {
+    const cached: number[] = [];
+    const res = mapLeftChats(raw({
+      _: 'messages.chatsSlice', count: 57,
+      chats: [chan(111, 'A'), { _: 'chat', id: 9, title: 'basic' }, chan(222, 'B')],
+    }), (c) => cached.push(c.id)) as Record<string, any>;
+    expect(res['@type']).toBe('chats');
+    expect(res.total_count).toBe(57);
+    expect(res.chat_ids).toEqual([channelToTdChatId(111), channelToTdChatId(222)]);
+    expect(cached).toEqual([channelToTdChatId(111), channelToTdChatId(222)]);
+  });
+
+  it('uses chats.length as total_count for a non-slice messages.chats', () => {
+    const res = mapLeftChats(raw({
+      _: 'messages.chats', chats: [chan(1, 'A'), chan(2, 'B')],
+    })) as Record<string, any>;
+    expect(res.total_count).toBe(2);
+    expect(res.chat_ids).toEqual([channelToTdChatId(1), channelToTdChatId(2)]);
+  });
+
+  it('includes channelForbidden (left channels you were removed from)', () => {
+    const res = mapLeftChats(raw({
+      _: 'messages.chats',
+      chats: [{ _: 'channelForbidden', id: 333, title: 'X', accessHash: Long.fromNumber(1) }],
+    })) as Record<string, any>;
+    expect(res.chat_ids).toEqual([channelToTdChatId(333)]);
   });
 });

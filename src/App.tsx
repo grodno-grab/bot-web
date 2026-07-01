@@ -22,12 +22,14 @@ import { AdminChatsScreen }   from './screens/AdminChatsScreen';
 import { DateRangeScreen }    from './screens/DateRangeScreen';
 import { AdminConfirmScreen } from './screens/AdminConfirmScreen';
 import { AdminDoneScreen }    from './screens/AdminDoneScreen';
+import { ExportApprovalScreen } from './screens/ExportApprovalScreen';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
 type Screen =
   | 'intro'
   | 'working'
+  | 'export-approval'
   | 'phone'
   | 'code'
   | 'password'
@@ -43,7 +45,7 @@ type Screen =
 
 // Order determines transition direction: forward = deeper index, back = lower index
 const SCREEN_ORDER: Screen[] = [
-  'intro', 'phone', 'code', 'password', 'working',
+  'intro', 'phone', 'code', 'password', 'working', 'export-approval',
   'bot-chat-select', 'confirm', 'mode-select', 'admin-chats', 'date-range',
   'admin-confirm', 'admin-done', 'bot-done', 'error',
 ];
@@ -53,6 +55,7 @@ interface AppState {
   prevScreen: Screen | null;
   workingText: string;
   workingSpinner: boolean;
+  exportApprovalText: string;
   errorText: string;
   passwordHint: string;
   botChatItems: BotChatItem[];
@@ -74,6 +77,7 @@ const initialState: AppState = {
   prevScreen: null,
   workingText: '',
   workingSpinner: true,
+  exportApprovalText: '',
   errorText: '',
   passwordHint: '',
   botChatItems: [],
@@ -104,6 +108,7 @@ function getHeaderConfig(screen: Screen): HeaderConfig {
     case 'code':
     case 'password':
     case 'working':
+    case 'export-approval':
     case 'error':         return {};
     case 'bot-chat-select': return { title: 'Выбор чатов' };
     case 'confirm':       return { title: 'Подтверждение' };
@@ -155,6 +160,9 @@ export function App() {
 
     showPasswordScreen: (hint) =>
       setState(prev => ({ ...prev, screen: 'password', prevScreen: prev.screen, passwordHint: hint })),
+
+    waitForExportApproval: (text) =>
+      waitFor<void>(prev => ({ ...prev, screen: 'export-approval', prevScreen: prev.screen, exportApprovalText: text })),
 
     waitForChatSelect: (chats) =>
       waitFor<Set<number> | null>(prev => ({
@@ -318,6 +326,9 @@ export function App() {
           )}
           {screen === 'working' && (
             <WorkingScreen text={state.workingText} spinner={state.workingSpinner} />
+          )}
+          {screen === 'export-approval' && (
+            <ExportApprovalScreen text={state.exportApprovalText} onContinue={() => dispatch(undefined)} />
           )}
           {screen === 'phone' && (
             <PhoneScreen onSubmit={p => sessionRef.current!.submitPhone(p)} />

@@ -19,8 +19,8 @@ import {
   getMarkedPeerId,
   parseMarkedPeerId,
   tl,
+  Chat,
 } from '@mtcute/web';
-import type { Chat } from '@mtcute/web';
 // Tree-shakable standalone methods: importing only the ~11 we use lets the bundler
 // drop the ~300+ high-level methods that the all-in-one TelegramClient would pull in.
 import {
@@ -29,15 +29,6 @@ import {
 } from '@mtcute/web/methods.js';
 
 type TdObject = Record<string, unknown>;
-
-// Diagnostics: verbose in dev, or set localStorage.td_debug='1' on a prod build.
-const DEBUG = (() => {
-  try {
-    return Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV) ||
-      (typeof localStorage !== 'undefined' && localStorage.getItem('td_debug') === '1');
-  } catch { return false; }
-})();
-const dlog = (...a: unknown[]): void => { if (DEBUG) console.info('[td-adapter]', ...a); };
 
 // ─── Pure helpers (unit-tested; no network) ─────────────────────────────────────
 
@@ -112,7 +103,17 @@ export function mapMessageRaw(raw: tl.RawMessage | tl.RawMessageService): TdObje
     // Any service type works as long as it is absent from REGULAR_CONTENT_TYPES.
     return { ...base, content: { '@type': 'messageChatAddMembers' } };
   }
-  return { ...base, content: mapContent(raw), reply_markup: mapReplyMarkup(raw.replyMarkup) };
+  // forward_info/reply_to carry the *origin* chat — used to discover chats from the
+  // "replies" service chat during account-export collection (see export-flow.ts).
+  const fwdPeer = raw.fwdFrom?.savedFromPeer ?? raw.fwdFrom?.fromId;
+  return {
+    ...base,
+    content: mapContent(raw),
+    reply_markup: mapReplyMarkup(raw.replyMarkup),
+    forward_info: fwdPeer ? { source: { chat_id: peerToTdChatId(fwdPeer) } } : undefined,
+    reply_to: raw.replyTo?._ === 'messageReplyHeader' && raw.replyTo.replyToPeerId
+      ? { chat_id: peerToTdChatId(raw.replyTo.replyToPeerId) } : undefined,
+  };
 }
 
 /** mtcute Chat → TDLib chat object. */
@@ -131,6 +132,25 @@ export function mapChat(chat: Chat): TdObject {
   // photo.minithumbnail isn't available from a dialog Chat; the UI falls back to
   // initials, so we omit it rather than fetch full info for every chat.
   return { id: chat.id, title: chat.title || chat.displayName || '', type };
+}
+
+/**
+ * channels.getLeftChannels response (messages.chats | messages.chatsSlice) → TDLib `chats`.
+ * `cache` (optional) receives each left channel as a Chat so a later getChat/getSupergroup
+ * resolves it from the adapter cache without a network round-trip (left chats aren't
+ * otherwise resolvable). Pure + side-effect-free when `cache` is omitted, so it unit-tests
+ * like mapMessageRaw.
+ */
+export function mapLeftChats(res: tl.messages.TypeChats, cache?: (chat: Chat) => void): TdObject {
+  const chat_ids: number[] = [];
+  for (const raw of res.chats) {
+    if (raw._ !== 'channel' && raw._ !== 'channelForbidden') continue;
+    const chat = new Chat(raw);
+    cache?.(chat);
+    chat_ids.push(chat.id); // marked id (-100…)
+  }
+  const total_count = res._ === 'messages.chatsSlice' ? res.count : res.chats.length;
+  return { '@type': 'chats', total_count, chat_ids };
 }
 
 function mapMemberStatus(part: tl.TypeChannelParticipant): TdObject {
@@ -190,7 +210,17 @@ export class TdAdapter {
   private phone = '';
   private phoneCodeHash = '';
   private loggedOut = false;
-  private botPollActive = false;
+  private clientOpts: {
+    apiId: number;
+    apiHash: string;
+    initConnectionOptions: {
+      deviceModel: string;
+      systemVersion: string;
+      appVersion: string;
+      systemLangCode: string;
+      langCode: string;
+    };
+  } | null = null;
 
   private chatCache = new Map<number, Chat>();
   private folderIds = new Map<'main' | 'archive', number[]>();
@@ -237,6 +267,12 @@ export class TdAdapter {
       case 'getMessages': return this.getMessages(p);
       case 'sendMessage': return this.sendMessage(p);
       case 'sendBotStartMessage': return this.sendBotStartMessage(p);
+      case 'searchChatMessages': return this.searchChatMessages(p);
+
+      // — account data export (takeout session) —
+      case 'initTakeoutSession': return this.initTakeoutSession(p);
+      case 'getLeftChats': return this.getLeftChats(p);
+      case 'finishTakeoutSession': return this.finishTakeoutSession(p);
 
       // — mutations —
       case 'deleteMessages': return this.deleteMessages(p);
@@ -244,12 +280,8 @@ export class TdAdapter {
       case 'toggleSupergroupHasHiddenMembers': return this.toggleHiddenMembers(p);
       case 'setMessageSenderBlockList': return this.unblockSender(p);
 
-      // closing the bot chat ends the reply poll started by sendBotStartMessage
-      case 'closeChat':
-        this.botPollActive = false;
-        return {};
-
       // — TDLib-local no-ops (no MTProto equivalent needed) —
+      case 'closeChat':
       case 'openChat':
       case 'resetChatLocalDeletedMessages':
         return {};
@@ -263,18 +295,9 @@ export class TdAdapter {
 
   private async setTdlibParameters(p: TdObject): Promise<TdObject> {
     const lang = String(p.system_language_code || 'en');
-    this.client = new BaseTelegramClient({
+    this.clientOpts = {
       apiId: num(p.api_id),
       apiHash: String(p.api_hash),
-      storage: new MemoryStorage(), // ephemeral: the app wipes all storage on exit anyway
-      // CRITICAL for login: Telegram silently drops the login-code delivery if the
-      // client calls updates.getState on an unauthorized key before sign-in — which
-      // mtcute's high-level updates manager does eagerly on connect. disableUpdates
-      // stops that (auth.sendCode goes via invokeWithoutUpdates), so the code actually
-      // arrives. The bot's reply is then obtained by polling (pollBotReply) since
-      // real-time onNewMessage is unavailable with updates disabled.
-      disableUpdates: true,
-      // Mirror the device profile the app gave TDLib (cosmetic; not the fix).
       initConnectionOptions: {
         deviceModel: String(p.device_model || 'Web'),
         systemVersion: String(p.system_version || 'Unknown'),
@@ -282,28 +305,58 @@ export class TdAdapter {
         systemLangCode: lang,
         langCode: lang,
       },
-    });
-    if (DEBUG) {
-      try { (this.client.log as unknown as { mgr: { level: number } }).mgr.level = 5; } catch { /* ignore */ }
-      dlog('mtcute client created (apiId=' + p.api_id + ')');
-    }
+    };
+    // Log in on a no-updates connection: with updates enabled mtcute sends initConnection
+    // with withUpdates and skips invokeWithoutUpdates, which makes Telegram drop the login
+    // code. After sign-in we swap to an updates-enabled client (see enableUpdates) so the
+    // bot's reply — which the bot deletes right after sending — is caught in real time.
+    this.client = this.buildClient(true);
     this.emitLater(authState('authorizationStateWaitEncryptionKey'));
     return {};
   }
 
+  private buildClient(disableUpdates: boolean): BaseTelegramClient {
+    return new BaseTelegramClient({
+      apiId: this.clientOpts!.apiId,
+      apiHash: this.clientOpts!.apiHash,
+      storage: new MemoryStorage(), // ephemeral: the app wipes all storage on exit anyway
+      disableUpdates,
+      initConnectionOptions: this.clientOpts!.initConnectionOptions,
+    });
+  }
+
+  /**
+   * After login, re-create the client with updates enabled (importing the just-authorized
+   * session) and forward incoming messages as TDLib updateNewMessage. Real-time delivery is
+   * required because the bot deletes its reply immediately, which a history poll can miss.
+   */
+  private async enableUpdates(): Promise<void> {
+    const old = this.tg;
+    const session = await old.exportSession();
+    const client = this.buildClient(false);
+    await client.importSession(session, true);
+    client.onRawUpdate.add((info) => {
+      const u = info.update;
+      if (u._ !== 'updateNewMessage' && u._ !== 'updateNewChannelMessage') return;
+      const m = u.message;
+      if (m._ !== 'messageEmpty') this.emit({ '@type': 'updateNewMessage', message: mapMessageRaw(m) });
+    });
+    await client.connect();
+    await client.startUpdatesLoop();
+    this.client = client;
+    old.destroy().catch(() => { /* best-effort */ });
+  }
+
   private async submitPhone(p: TdObject): Promise<TdObject> {
     this.phone = String(p.phone_number);
-    dlog('sendCode → connecting and requesting code for', this.phone);
     let sent;
     try {
       sent = await sendCode(this.tg,{ phone: this.phone });
     } catch (e) {
-      console.error('[td-adapter] sendCode FAILED:', e);
       throw new Error(humanizeAuthError(e));
     }
-    dlog('sendCode result:', sent);
     if (!('phoneCodeHash' in sent)) {
-      this.onAuthorized(); // already logged in (returned a User)
+      await this.onAuthorized(); // already logged in (returned a User)
       return {};
     }
     this.phoneCodeHash = sent.phoneCodeHash;
@@ -314,13 +367,13 @@ export class TdAdapter {
   private async submitCode(p: TdObject): Promise<TdObject> {
     try {
       await signIn(this.tg,{ phone: this.phone, phoneCodeHash: this.phoneCodeHash, phoneCode: String(p.code) });
-      this.onAuthorized();
     } catch (e) {
-      if (!is2FANeeded(e)) { console.error('[td-adapter] signIn FAILED:', e); throw new Error(humanizeAuthError(e)); }
-      dlog('2FA password required');
+      if (!is2FANeeded(e)) throw new Error(humanizeAuthError(e));
       const hint = await getPasswordHint(this.tg).catch(() => null);
       this.emitLater(authState('authorizationStateWaitPassword', { password_hint: hint ?? '' }));
+      return {};
     }
+    await this.onAuthorized();
     return {};
   }
 
@@ -328,16 +381,15 @@ export class TdAdapter {
     try {
       await checkPassword(this.tg,String(p.password));
     } catch (e) {
-      console.error('[td-adapter] checkPassword FAILED:', e);
       throw new Error(humanizeAuthError(e));
     }
-    this.onAuthorized();
+    await this.onAuthorized();
     return {};
   }
 
-  private onAuthorized(): void {
-    // signIn/checkPassword call notifyLoggedIn internally, which starts the update
-    // loop; onNewMessage (the bot reply) flows from here on.
+  private async onAuthorized(): Promise<void> {
+    // Re-initialise with an updates-enabled client so real-time updateNewMessage flows.
+    await this.enableUpdates();
     this.emitLater(authState('authorizationStateReady'));
   }
 
@@ -507,7 +559,6 @@ export class TdAdapter {
   private async sendBotStartMessage(p: TdObject): Promise<TdObject> {
     const bot = await resolveUser(this.tg,num(p.bot_user_id));
     const peer = await resolvePeer(this.tg,num(p.chat_id));
-    const since = await this.latestServerMessageId(peer);
     await this.tg.call({
       _: 'messages.startBot',
       bot,
@@ -515,9 +566,70 @@ export class TdAdapter {
       randomId: randomLong(),
       startParam: String(p.parameter),
     });
-    // Updates are disabled (see setTdlibParameters), so poll for the bot's reply and
-    // surface it as updateNewMessage — the same shape TDLib delivered in real time.
-    void this.pollBotReply(peer, since);
+    // The bot's reply arrives in real time via onRawUpdate (updates enabled after login).
+    return {};
+  }
+
+  /** Search a chat's messages (used by export-flow to find the user's own messages). */
+  private async searchChatMessages(p: TdObject): Promise<TdObject> {
+    const peer = await resolvePeer(this.tg, num(p.chat_id));
+    const senderUserId = (p.sender_id as TdObject | undefined)?.user_id;
+    const fromId = senderUserId != null ? await resolvePeer(this.tg, num(senderUserId)) : undefined;
+    const fromMsgId = num(p.from_message_id) || 0;
+    const limit = num(p.limit) || 100;
+    const res = await this.tg.call({
+      _: 'messages.search',
+      peer,
+      q: String(p.query ?? ''),
+      fromId,
+      filter: { _: 'inputMessagesFilterEmpty' },
+      minDate: 0,
+      maxDate: 0,
+      // offsetId is exclusive in server-id space (see getChatHistory); ceil preserves a +1 anchor.
+      offsetId: fromMsgId ? Math.ceil(fromMsgId / MSG_ID_SHIFT) : 0,
+      addOffset: num(p.offset),
+      limit,
+      maxId: 0,
+      minId: 0,
+      hash: Long.ZERO,
+    });
+    const concrete = rawMessages(res).filter(isConcrete);
+    // next_from_message_id = oldest message of this page, only if the page was full (more may exist).
+    const oldest = concrete[concrete.length - 1];
+    const next_from_message_id = oldest && concrete.length >= limit ? toTdMessageId(oldest.id) : 0;
+    return { messages: concrete.map(mapMessageRaw), next_from_message_id };
+  }
+
+  // ─── Account data export (takeout session) ──────────────────────────────────────
+
+  private async initTakeoutSession(p: TdObject): Promise<TdObject> {
+    const res = await this.tg.call({
+      _: 'account.initTakeoutSession',
+      messageUsers: !!p.message_users,
+      messageChats: !!p.message_chats,
+      messageMegagroups: !!p.message_megagroups,
+      messageChannels: !!p.message_channels,
+    });
+    // int64 takeout id → string so it survives the send() JSON boundary without precision loss.
+    return { '@type': 'takeoutSession', id: res.id.toString() };
+  }
+
+  private async getLeftChats(p: TdObject): Promise<TdObject> {
+    const res = await this.tg.call({
+      _: 'invokeWithTakeout',
+      takeoutId: Long.fromString(String(p.takeout_session_id)),
+      query: { _: 'channels.getLeftChannels', offset: num(p.offset) },
+    }) as tl.messages.TypeChats;
+    return mapLeftChats(res, (chat) => this.chatCache.set(chat.id, chat));
+  }
+
+  private async finishTakeoutSession(p: TdObject): Promise<TdObject> {
+    // finish must also go through invokeWithTakeout (mirrors mtcute's TakeoutSession.finish).
+    await this.tg.call({
+      _: 'invokeWithTakeout',
+      takeoutId: Long.fromString(String(p.takeout_session_id)),
+      query: { _: 'account.finishTakeoutSession', success: p.success !== false },
+    });
     return {};
   }
 
@@ -560,44 +672,6 @@ export class TdAdapter {
     return this.client;
   }
 
-  /** Newest server message id currently in a chat (0 if empty). */
-  private async latestServerMessageId(peer: tl.TypeInputPeer): Promise<number> {
-    const res = await this.tg.call({
-      _: 'messages.getHistory', peer, offsetId: 0, offsetDate: 0, addOffset: 0,
-      limit: 1, maxId: 0, minId: 0, hash: Long.ZERO,
-    });
-    return rawMessages(res).filter(isConcrete)[0]?.id ?? 0;
-  }
-
-  /** Poll a chat for new incoming messages and emit them as TDLib updateNewMessage. */
-  private async pollBotReply(peer: tl.TypeInputPeer, sinceServerId: number): Promise<void> {
-    if (this.botPollActive) return;
-    this.botPollActive = true;
-    const deadline = Date.now() + 90_000;
-    let lastSeen = sinceServerId;
-    try {
-      while (this.botPollActive && !this.loggedOut && Date.now() < deadline) {
-        await delay(1500);
-        let res;
-        try {
-          res = await this.tg.call({
-            _: 'messages.getHistory', peer, offsetId: 0, offsetDate: 0, addOffset: 0,
-            limit: 10, maxId: 0, minId: 0, hash: Long.ZERO,
-          });
-        } catch { continue; }
-        const fresh = rawMessages(res).filter(isConcrete)
-          .filter((m) => m.id > lastSeen && !m.out) // new and incoming (from the bot, not us)
-          .sort((a, b) => a.id - b.id);
-        for (const m of fresh) {
-          lastSeen = Math.max(lastSeen, m.id);
-          this.emit({ '@type': 'updateNewMessage', message: mapMessageRaw(m) });
-        }
-      }
-    } finally {
-      this.botPollActive = false;
-    }
-  }
-
   private async resolveChat(tdChatId: number): Promise<Chat> {
     const cached = this.chatCache.get(tdChatId);
     if (cached) return cached;
@@ -617,7 +691,10 @@ export class TdAdapter {
   }
 
   private async inputChannel(tdChatId: number): Promise<tl.TypeInputChannel> {
-    const peer = await resolvePeer(this.tg,tdChatId);
+    // Prefer the cached Chat's inputPeer: it carries the access hash for *left* channels
+    // (from getLeftChannels), which resolvePeer can't reconstruct once you've left them.
+    const cached = this.chatCache.get(tdChatId);
+    const peer = cached ? cached.inputPeer : await resolvePeer(this.tg, tdChatId);
     if (peer._ === 'inputPeerChannel') {
       return { _: 'inputChannel', channelId: peer.channelId, accessHash: peer.accessHash };
     }
@@ -639,8 +716,6 @@ export class TdAdapter {
 // ─── Local utilities ────────────────────────────────────────────────────────────
 
 const num = (v: unknown): number => Number(v);
-
-const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function folderOf(chatList: unknown): 'main' | 'archive' {
   return (chatList as TdObject | undefined)?.['@type'] === 'chatListArchive' ? 'archive' : 'main';

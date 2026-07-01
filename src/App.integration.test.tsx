@@ -141,7 +141,7 @@ describe('App — admin flow', () => {
     expect(screen.getByText(/Обработано пользователей: 1/)).toBeInTheDocument();
 
     clickBtn('Завершить');
-    await screen.findByText('Можно закрыть вкладку.');
+    await screen.findByText('Готово. Можно закрыть вкладку.');
 
     const deletedUsers = world
       .callsOf('deleteChatMessagesBySender')
@@ -280,6 +280,8 @@ describe('App — delete-my-messages flow', () => {
     const fake = makeFakeSend({
       handlers: {
         getMe: { id: meId },
+        // collectChatsViaExport runs before the bot flow; loadChats throws when exhausted.
+        loadChats: new Error('no more chats'),
         searchPublicChat: { id: BOT_CHAT_ID },
         getChat: {
           id: -1000000005001,
@@ -337,6 +339,8 @@ describe('App — delete-my-messages flow', () => {
     const fake = makeFakeSend({
       handlers: {
         getMe: { id: meId },
+        // collectChatsViaExport runs before the bot flow; loadChats throws when exhausted.
+        loadChats: new Error('no more chats'),
         searchPublicChat: { id: BOT_CHAT_ID },
         getChat: {
           id: -1000000005001,
@@ -389,6 +393,8 @@ describe('App — delete-my-messages flow', () => {
   it('shows the "nothing found" screen when the bot has no messages to delete', async () => {
     const fake = makeFakeSend({
       handlers: {
+        // collectChatsViaExport runs before the bot flow; loadChats throws when exhausted.
+        loadChats: new Error('no more chats'),
         searchPublicChat: { id: BOT_CHAT_ID },
         deleteMessages: {},
         logOut: {},
@@ -410,7 +416,7 @@ describe('App — delete-my-messages flow', () => {
 
     clickText('Удалить мои сообщения');
 
-    // Instead of hanging on "Получение сообщений…", the done screen is shown.
+    // Instead of hanging on "Ожидание ответа бота…", the done screen is shown.
     expect(await screen.findByText('Всё чисто')).toBeInTheDocument();
     expect(screen.getByText(/Сообщений для удаления не найдено/)).toBeInTheDocument();
 
@@ -431,6 +437,8 @@ describe('App — delete-my-messages flow', () => {
     const fake = makeFakeSend({
       handlers: {
         getMe: { id: meId },
+        // collectChatsViaExport runs before the bot flow; loadChats throws when exhausted.
+        loadChats: new Error('no more chats'),
         searchPublicChat: { id: BOT_CHAT_ID },
         getChat: {
           id: -1000000005001,

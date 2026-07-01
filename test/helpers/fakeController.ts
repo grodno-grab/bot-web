@@ -60,6 +60,9 @@ export function makeFakeController(answers: ScriptedAnswers = {}): FakeControlle
     showCodeScreen: () => record('showCodeScreen', []),
     showPasswordScreen: (hint) => record('showPasswordScreen', [hint]),
 
+    waitForExportApproval: async (text: string) => {
+      record('waitForExportApproval', [text]);
+    },
     waitForChatSelect: async (chats: BotChatItem[]) => {
       record('waitForChatSelect', [chats]);
       return next<Set<number> | null>('chatSelect', null);

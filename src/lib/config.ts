@@ -19,11 +19,14 @@ export const TDLIB_INSTANCE_NAME = 'tdlib-session';
 
 export const EXIT_FALLBACK_URL = 'https://www.google.com/';
 
+// Deep-link to the Telegram service account (42777) that delivers login codes and
+// data-export confirmations. Opening it lets the user read the code / approve the export.
+export const TELEGRAM_SERVICE_URL = 'tg://resolve?phone=42777';
+
 // Numeric limits and timeouts
 export const CHAT_LOAD_BATCH_LIMIT   = 100;    // max chats per loadChats call
 export const CHAT_LIST_MAX           = 100000; // getChats limit (effectively "all")
 export const MESSAGE_HISTORY_LIMIT   = 100;    // messages per getChatHistory call
-export const ADMIN_CHECK_BATCH_SIZE  = 20;     // concurrent admin-permission checks
 export const MAX_VERIFY_PASSES       = 5;      // admin deletion verification passes
 export const MAX_DELETE_RETRIES      = 3;      // max retries per deleteMessages batch
 export const DELETE_MESSAGES_BATCH_SIZE = 100;  // max message IDs per deleteMessages call

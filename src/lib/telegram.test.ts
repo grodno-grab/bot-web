@@ -234,6 +234,59 @@ describe('TelegramSession — incoming bot messages (anti-spoofing guards)', () 
   });
 });
 
+describe('TelegramSession — takeout session', () => {
+  const pendingMode = () => new Promise<'user' | 'admin'>(() => {}); // never resolves
+
+  it('opens a takeout session right after login (no approval when init succeeds)', async () => {
+    const tg = installTg({ initTakeoutSession: { '@type': 'takeoutSession', id: '77' } });
+    const fc = makeFakeController();
+    fc.ctrl.waitForModeSelect = vi.fn(pendingMode);
+    new TelegramSession(fc.ctrl);
+
+    tg.emit(authUpdate('authorizationStateReady'));
+    await flush();
+
+    expect(tg.fake.lastOf('initTakeoutSession')?.params).toMatchObject({
+      message_megagroups: true,
+      message_channels: true,
+    });
+    expect(fc.callsOf('waitForExportApproval')).toHaveLength(0);
+  });
+
+  it('asks the user to approve the export, then retries until takeout succeeds', async () => {
+    const tg = installTg({
+      initTakeoutSession: [new Error('TAKEOUT_INIT_DELAY_42'), { '@type': 'takeoutSession', id: '77' }],
+    });
+    const fc = makeFakeController();
+    fc.ctrl.waitForModeSelect = vi.fn(pendingMode);
+    new TelegramSession(fc.ctrl);
+
+    tg.emit(authUpdate('authorizationStateReady'));
+    await flush();
+    await flush();
+
+    expect(fc.callsOf('waitForExportApproval')).toHaveLength(1);
+    expect(tg.fake.countOf('initTakeoutSession')).toBe(2);
+  });
+
+  it('closes the takeout session on page unload', async () => {
+    const tg = installTg({ initTakeoutSession: { '@type': 'takeoutSession', id: '77' }, logOut: {} });
+    const fc = makeFakeController();
+    fc.ctrl.waitForModeSelect = vi.fn(pendingMode);
+    const session = new TelegramSession(fc.ctrl);
+
+    tg.emit(authUpdate('authorizationStateReady'));
+    await flush();
+    session.onPageUnload();
+    await flush();
+
+    expect(tg.fake.lastOf('finishTakeoutSession')?.params).toMatchObject({
+      takeout_session_id: '77',
+      success: true,
+    });
+  });
+});
+
 describe('TelegramSession — exit & cleanup (security-relevant logout)', () => {
   const mockLocation = (): { replace: ReturnType<typeof vi.fn>; restore: () => void } => {
     const original = window.location;

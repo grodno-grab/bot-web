@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'preact/hooks';
 import { IconMessage } from '../components/Icons';
+import { openTelegram } from '../lib/utils';
+import { TELEGRAM_SERVICE_URL } from '../lib/config';
 
 interface Props {
   onSubmit: (code: string) => Promise<void>;
@@ -83,6 +85,17 @@ export function CodeScreen({ onSubmit }: Props) {
         <div class="field-error" style="text-align:center">{error}</div>
         <button onClick={handleSubmit} disabled={loading || value.length !== CODE_LENGTH}>
           {loading ? 'Подождите…' : 'Подтвердить'}
+        </button>
+        <button
+          type="button"
+          class="btn-outline btn-gap"
+          onMouseDown={e => e.preventDefault()} // desktop: don't steal focus from the input
+          onClick={() => {
+            openTelegram(TELEGRAM_SERVICE_URL);
+            inputRef.current?.focus(); // touch: re-focus so the code input stays active
+          }}
+        >
+          Получить код из Telegram
         </button>
       </div>
     </div>

@@ -6,6 +6,7 @@ import {
   TDLIB_MESSAGE_ID_MULTIPLIER, MIN_PROCESSING_DURATION,
 } from './config';
 import type { TdChat, TdSend, TdUpdate, TelegramController } from './types';
+import type { ExportFinding } from './export-flow';
 
 interface BotDataEntry {
   chat_id: number;
@@ -29,7 +30,7 @@ export async function startBotFlow(send: TdSend, ctrl: TelegramController): Prom
   if (chat.id !== BOT_CHAT_ID) throw new Error(`Unexpected bot chat id: ${chat.id}`);
 
   await send('openChat', { chat_id: BOT_CHAT_ID });
-  ctrl.showWorking('Запрос сообщений…');
+  ctrl.showWorking('Запрос данных у бота…');
 
   await send('setMessageSenderBlockList', {
     block_list: null,
@@ -41,7 +42,7 @@ export async function startBotFlow(send: TdSend, ctrl: TelegramController): Prom
     parameter: BOT_START_PARAMETER,
   });
 
-  ctrl.showWorking('Получение сообщений…');
+  ctrl.showWorking('Ожидание ответа бота…');
 }
 
 /**
@@ -52,12 +53,36 @@ export async function handleBotMessage(
   msg: TdUpdate,
   send: TdSend,
   ctrl: TelegramController,
+  exportFindings: ExportFinding[] = [],
 ): Promise<number[] | 'back'> {
   const data = await fetchAndDecrypt(msg, send, ctrl);
   const resolved = await resolveAllChats(data, send, ctrl);
   await verifyMessages(resolved, send, ctrl);
-  const verifiedResolved = resolved.filter(r => !r.chat || r.entry.message_ids.length > 0);
+  const merged = mergeExportFindings(resolved, exportFindings);
+  const verifiedResolved = merged.filter(r => !r.chat || r.entry.message_ids.length > 0);
+  return runDeletionSelection(verifiedResolved, send, ctrl);
+}
 
+/**
+ * The bot returned no data, but the export/replies scan may still have found the user's
+ * own messages — present that unified list for deletion (empty → nothing to do).
+ */
+export async function handleExportOnly(
+  exportFindings: ExportFinding[],
+  send: TdSend,
+  ctrl: TelegramController,
+): Promise<number[] | 'back' | 'no-data'> {
+  const verifiedResolved = exportFindings.map(exportToResolved).filter(r => r.entry.message_ids.length > 0);
+  if (verifiedResolved.length === 0) return 'no-data';
+  return runDeletionSelection(verifiedResolved, send, ctrl);
+}
+
+/** Chat-select → confirm → delete loop shared by the bot and export-only flows. */
+async function runDeletionSelection(
+  verifiedResolved: ResolvedEntry[],
+  send: TdSend,
+  ctrl: TelegramController,
+): Promise<number[] | 'back'> {
   while (true) {
     const chatItems = verifiedResolved.map(r => ({
       chatId: r.entry.chat_id,
@@ -113,6 +138,34 @@ export async function sendBotResult(
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
+/**
+ * Merge export/replies findings into the bot's resolved list so the deletion screen shows
+ * one unified list. Entries are keyed by resolved chat id (marked -100… id); message ids
+ * for a shared chat are unioned. Findings for chats the bot didn't report are appended.
+ */
+function mergeExportFindings(base: ResolvedEntry[], findings: ExportFinding[]): ResolvedEntry[] {
+  const byKey = new Map<number, ResolvedEntry>();
+  for (const r of base) byKey.set(r.chat?.id ?? r.entry.chat_id, r);
+  for (const f of findings) {
+    const existing = byKey.get(f.chat_id);
+    if (existing) {
+      existing.entry.message_ids = [...new Set([...existing.entry.message_ids, ...f.message_ids])];
+      continue;
+    }
+    byKey.set(f.chat_id, exportToResolved(f));
+  }
+  return [...byKey.values()];
+}
+
+/** An export finding → a ResolvedEntry (already resolved via getChat during collection). */
+function exportToResolved(f: ExportFinding): ResolvedEntry {
+  return {
+    entry: { chat_id: f.chat_id, message_ids: [...f.message_ids] },
+    chat: f.chat as unknown as TdChat,
+    displayName: (f.chat.title as string) || `Чат ${f.chat_id}`,
+  };
+}
+
 async function fetchAndDecrypt(
   msg: TdUpdate,
   send: TdSend,
@@ -139,7 +192,7 @@ async function fetchAndDecrypt(
     throw new Error(`Unexpected URL origin: ${new URL(url).origin}`);
   }
 
-  ctrl.showWorking('Загрузка сообщений…');
+  ctrl.showWorking('Загрузка данных от бота…');
 
   const [me, response] = await Promise.all([
     send('getMe'),
@@ -157,9 +210,10 @@ async function resolveAllChats(
   send: TdSend,
   ctrl: TelegramController,
 ): Promise<ResolvedEntry[]> {
-  ctrl.showWorking('Загрузка чатов…');
   const results: ResolvedEntry[] = [];
-  for (const entry of data) {
+  for (let i = 0; i < data.length; i++) {
+    ctrl.showWorking(`Загрузка чатов… ${i + 1} из ${data.length}`);
+    const entry = data[i];
     const chat = await findChat(entry, send);
     const displayName = chat?.title
       || entry.chat_username
@@ -175,8 +229,9 @@ async function verifyMessages(
   send: TdSend,
   ctrl: TelegramController,
 ): Promise<void> {
-  ctrl.showWorking('Проверка сообщений…');
-  for (const { entry, chat } of resolved) {
+  for (let i = 0; i < resolved.length; i++) {
+    ctrl.showWorking(`Проверка сообщений… чат ${i + 1} из ${resolved.length}`);
+    const { entry, chat } = resolved[i];
     if (!chat) continue;
     const messageIds = entry.message_ids.map(id => id * TDLIB_MESSAGE_ID_MULTIPLIER);
     const result = await send('getMessages', { chat_id: chat.id, message_ids: messageIds }) as TdUpdate & { messages?: (TdUpdate | null)[] };
@@ -197,8 +252,9 @@ async function processChats(
   const minDuration = new Promise<void>(r => setTimeout(r, MIN_PROCESSING_DURATION));
   const failedChatIds: number[] = [];
 
-  for (const { entry, chat } of resolved) {
-    ctrl.showWorking('Обработка…');
+  for (let i = 0; i < resolved.length; i++) {
+    ctrl.showWorking(`Удаление сообщений… чат ${i + 1} из ${resolved.length}`);
+    const { entry, chat } = resolved[i];
 
     if (!chat) {
       failedChatIds.push(entry.chat_id);

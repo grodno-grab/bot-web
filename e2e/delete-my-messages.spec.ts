@@ -80,7 +80,7 @@ test('shows the "nothing found" screen when the bot has no messages to delete', 
 
   await page.getByText('Удалить мои сообщения').click();
 
-  // Regression: this used to hang on "Получение сообщений…" forever.
+  // Regression: this used to hang on "Ожидание ответа бота…" forever.
   await expect(page.getByText('Всё чисто')).toBeVisible();
   await expect(page.getByText(/Сообщений для удаления не найдено/)).toBeVisible();
 });

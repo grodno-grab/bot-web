@@ -50,3 +50,39 @@ export function pluralChatsGenitive(n: number): string {
   if (mod10 === 1 && mod100 !== 11) return 'чата';
   return 'чатов';
 }
+
+// ─── Telegram integration helpers ────────────────────────────────────────────────
+
+/** Open a tg:// deep link like a real anchor click — launches the app, keeps this page. */
+export function openTelegram(url: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noreferrer';
+  a.click();
+}
+
+/**
+ * Identify this web client to Telegram the way a browser would (as shown in the user's
+ * active-sessions list), e.g. "Chrome 120" / "Linux" — instead of a generic "Web".
+ * mtcute sends whatever device_model we pass verbatim, so we derive it from the UA here.
+ */
+export function browserProfile(): { deviceModel: string; systemVersion: string } {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const ver = (re: RegExp): string => re.exec(ua)?.[1] ?? '';
+
+  let deviceModel = 'Web';
+  if (/Edg\//.test(ua)) deviceModel = `Edge ${ver(/Edg\/(\d+)/)}`;
+  else if (/OPR\//.test(ua)) deviceModel = `Opera ${ver(/OPR\/(\d+)/)}`;
+  else if (/Firefox\//.test(ua)) deviceModel = `Firefox ${ver(/Firefox\/(\d+)/)}`;
+  else if (/Chrome\//.test(ua)) deviceModel = `Chrome ${ver(/Chrome\/(\d+)/)}`;
+  else if (/Safari\//.test(ua)) deviceModel = `Safari ${ver(/Version\/(\d+)/)}`;
+
+  let systemVersion = (typeof navigator !== 'undefined' && navigator.platform) || 'Unknown';
+  if (/Windows NT/.test(ua)) systemVersion = 'Windows';
+  else if (/Android/.test(ua)) systemVersion = `Android ${ver(/Android[ /](\d+)/)}`.trim();
+  else if (/iPhone|iPad|iPod/.test(ua)) systemVersion = 'iOS';
+  else if (/Mac OS X/.test(ua)) systemVersion = 'macOS';
+  else if (/Linux/.test(ua)) systemVersion = 'Linux';
+
+  return { deviceModel: deviceModel.trim(), systemVersion };
+}
