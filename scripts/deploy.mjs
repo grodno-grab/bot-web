@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 import { Storage } from '@google-cloud/storage';
+import { JWT } from 'google-auth-library';
 import dotenv from 'dotenv';
 import {
   parseGeneration,
@@ -47,11 +48,23 @@ const compressed = brotliCompressSync(readFileSync('dist/index.html'), {
 console.log(`Compressed: ${(compressed.length / 1024).toFixed(1)} KB`);
 
 const creds = JSON.parse(process.env.GCS_CREDENTIALS);
-const storage = new Storage({ credentials: creds, projectId: creds.project_id });
+// Fetch the OAuth token over Node's native fetch (undici) instead of node-fetch,
+// whose gzip handling intermittently throws ERR_STREAM_PREMATURE_CLOSE on the
+// token endpoint and fails the deploy.
+const authClient = new JWT({
+  email: creds.client_email,
+  key: creds.private_key,
+  scopes: ['https://www.googleapis.com/auth/devstorage.full_control'],
+  transporterOptions: { fetchImplementation: fetch },
+});
+const storage = new Storage({ authClient, projectId: creds.project_id });
 
 console.log(`Uploading to gs://${GCS_BUCKET}/${GCS_OBJECT}...`);
 const file = storage.bucket(GCS_BUCKET).file(GCS_OBJECT);
+// The payload is tiny (~180 KB), so a single simple upload is more robust than a
+// multi-request resumable session.
 await file.save(compressed, {
+  resumable: false,
   metadata: {
     contentType: 'text/html; charset=utf-8',
     contentEncoding: 'br',

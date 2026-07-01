@@ -28,6 +28,7 @@
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.9",
     "dotenv": "^17.4.0",
+    "google-auth-library": "^9.15.1",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.2",
     "vite": "^8.0.3",
