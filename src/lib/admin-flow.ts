@@ -20,13 +20,17 @@ export async function runAdminFlow(
   ctrl.showWorking('Получение данных пользователя…');
   const me = await send('getMe') as TdUpdate & { id: number };
 
-  // Include chats the user has left (via the takeout session): they may still hold admin
-  // rights there. Unlike the bot flow, we don't fetch messages — only check permissions.
+  // Gather every chat the account touches from the same sources as the user flow: current +
+  // archived dialogs, chats left via the takeout session (may still hold admin rights), and
+  // chats surfaced only through the "replies" service chat. Unlike the bot flow, we don't
+  // fetch messages — only check permissions.
   ctrl.showWorking('Загрузка списка чатов…');
   const currentIds = await loadAllChatIds(send);
   const leftIds = await collectLeftChatIds(send, takeoutSessionId,
     (n) => ctrl.showWorking(`Поиск покинутых чатов… найдено ${n}`));
-  const chatIds = [...new Set([...currentIds, ...leftIds])];
+  const repliesIds = await collectRepliesOriginChatIds(send,
+    (n) => ctrl.showWorking(`Поиск чатов через «Ответы»… просмотрено ${n}`));
+  const chatIds = [...new Set([...currentIds, ...leftIds, ...repliesIds])];
   const adminChats = await filterAdminChats(chatIds, me.id, send, ctrl);
 
   if (adminChats.length === 0) {
@@ -136,6 +140,51 @@ export async function collectLeftChatIds(
   return ids;
 }
 
+/**
+ * Discover chat ids hidden in the "replies" service chat: forwarded messages and comment
+ * replies carry their origin chat in forward_info.source / reply_to headers, so this surfaces
+ * chats the account's own dialog/left lists don't mention. Best-effort — returns whatever it
+ * finds and swallows any error (missing chat, no permission, flood). The ids may include user
+ * or channel ids the caller doesn't care about; callers filter them via getChat.
+ */
+export async function collectRepliesOriginChatIds(
+  send: TdSend,
+  onProgress?: (scanned: number) => void,
+): Promise<number[]> {
+  const ids = new Set<number>();
+  try {
+    const repliesChat = await send('searchPublicChat', { username: 'replies' }) as TdUpdate & { id?: number };
+    if (typeof repliesChat.id !== 'number') return []; // no reachable replies chat → nothing to scan
+    await send('openChat', { chat_id: repliesChat.id });
+    let fromMsgId = 0;
+    let scanned = 0;
+    for (;;) {
+      const result = await send('getChatHistory', {
+        chat_id: repliesChat.id,
+        from_message_id: fromMsgId,
+        offset: 0,
+        limit: MESSAGE_HISTORY_LIMIT,
+        only_local: false,
+      }) as TdUpdate & { messages?: TdUpdate[] };
+      const msgs = result.messages ?? [];
+      if (msgs.length === 0) break;
+      scanned += msgs.length;
+      onProgress?.(scanned);
+      for (const msg of msgs) {
+        const sourceId = ((msg.forward_info as TdUpdate | undefined)?.source as TdUpdate | undefined)?.chat_id as number | undefined;
+        if (sourceId) ids.add(sourceId);
+        const replyId = (msg.reply_to as TdUpdate | undefined)?.chat_id as number | undefined;
+        if (replyId) ids.add(replyId);
+      }
+      const lastId = msgs[msgs.length - 1].id as number;
+      if (fromMsgId !== 0 && lastId >= fromMsgId) break; // guard against non-advancing pagination
+      fromMsgId = lastId;
+    }
+    await send('closeChat', { chat_id: repliesChat.id });
+  } catch (_) { /* best-effort */ }
+  return [...ids];
+}
+
 async function filterAdminChats(
   chatIds: number[],
   myUserId: number,
@@ -147,8 +196,8 @@ async function filterAdminChats(
   // Sequential (not batched): parallel channels.getParticipant calls trigger FLOOD_WAIT,
   // and retrying a whole batch in parallel just re-floods → admin chats get dropped. A serial
   // pass lets sendFloodSafe wait each flood out (with the same "Пауза…" countdown as the export
-  // scan), so nothing is lost. getChat is served from cache here (chats came from loadChats /
-  // getLeftChats), so only getChatMember hits the network.
+  // scan), so nothing is lost. getChat is usually served from cache (dialog / left chats came
+  // from loadChats / getLeftChats); only replies-discovered ids and getChatMember hit the network.
   for (let i = 0; i < chatIds.length; i++) {
     ctrl.showWorking(`Проверка чатов… ${i + 1} из ${chatIds.length}`);
     try {

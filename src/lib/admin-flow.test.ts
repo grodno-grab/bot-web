@@ -82,6 +82,26 @@ describe('runAdminFlow — discovery', () => {
     expect(titles.sort()).toEqual(['Current', 'LeftButCreator']);
   });
 
+  it('also discovers admin chats through the "replies" service chat (B3)', async () => {
+    const world: WorldDef = {
+      meId: ME,
+      chatIds: [5001],
+      repliesOrigins: [8001], // reachable only via the replies scan, not the dialog/left lists
+      chats: [
+        { id: 5001, title: 'Current', supergroupId: 5001, myStatus: 'creator' },
+        { id: 8001, title: 'ViaReplies', supergroupId: 8001, myStatus: 'creator' },
+      ],
+    };
+    const { send } = buildAdminSend(world);
+    const fc = makeFakeController({ adminChatSelect: [null] });
+
+    const result = await runAdminFlow(send, fc.ctrl, '42');
+
+    expect(result).toBe('back');
+    const titles = groupsArg(fc).flatMap((g) => g.chats.map((c) => c.title));
+    expect(titles.sort()).toEqual(['Current', 'ViaReplies']);
+  });
+
   it('does not query left chats when there is no takeout session', async () => {
     const world: WorldDef = {
       meId: ME,

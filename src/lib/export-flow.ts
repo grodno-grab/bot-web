@@ -1,4 +1,4 @@
-import { loadAllChatIds, collectLeftChatIds } from './admin-flow';
+import { loadAllChatIds, collectLeftChatIds, collectRepliesOriginChatIds } from './admin-flow';
 import { MESSAGE_HISTORY_LIMIT, TDLIB_MESSAGE_ID_MULTIPLIER } from './config';
 import { sendFloodSafe } from './flood';
 import type { TdSend, TdUpdate, TelegramController } from './types';
@@ -49,36 +49,11 @@ export async function collectChatsViaExport(
   }
 
   // B3. The "replies" service chat — discover origin chats from forward/reply headers. Best-effort.
-  try {
-    ctrl.showWorking('Поиск чатов через «Ответы»…');
-    const repliesChat = await send('searchPublicChat', { username: 'replies' }) as TdUpdate & { id: number };
-    await send('openChat', { chat_id: repliesChat.id });
-    let fromMsgId = 0;
-    let scanned = 0;
-    for (;;) {
-      const result = await send('getChatHistory', {
-        chat_id: repliesChat.id,
-        from_message_id: fromMsgId,
-        offset: 0,
-        limit: MESSAGE_HISTORY_LIMIT,
-        only_local: false,
-      }) as TdUpdate & { messages?: TdUpdate[] };
-      const msgs = result.messages ?? [];
-      if (msgs.length === 0) break;
-      scanned += msgs.length;
-      ctrl.showWorking(`Поиск чатов через «Ответы»… просмотрено ${scanned}`);
-      for (const msg of msgs) {
-        const sourceId = ((msg.forward_info as TdUpdate | undefined)?.source as TdUpdate | undefined)?.chat_id as number | undefined;
-        if (sourceId) allChatIds.add(sourceId);
-        const replyId = (msg.reply_to as TdUpdate | undefined)?.chat_id as number | undefined;
-        if (replyId) allChatIds.add(replyId);
-      }
-      const lastId = msgs[msgs.length - 1].id as number;
-      if (fromMsgId !== 0 && lastId >= fromMsgId) break; // guard against non-advancing pagination
-      fromMsgId = lastId;
-    }
-    await send('closeChat', { chat_id: repliesChat.id });
-  } catch (_) { /* best-effort */ }
+  ctrl.showWorking('Поиск чатов через «Ответы»…');
+  for (const id of await collectRepliesOriginChatIds(send,
+    (n) => ctrl.showWorking(`Поиск чатов через «Ответы»… просмотрено ${n}`))) {
+    allChatIds.add(id);
+  }
 
   // C. Load chat objects, deduped by chat.id; for channels also pull the linked discussion group.
   const allIds = [...allChatIds];
@@ -109,9 +84,8 @@ export async function collectChatsViaExport(
   }
   const chats = [...chatsMap.values()];
 
-  // D. Find the user's own messages in each chat.
-  // TODO: использовать найденные сообщения — удалять их, как в бот-потоке (bot-flow.ts),
-  //       либо заменить этим механизмом получение списка чатов от бота.
+  // D. Find the user's own messages in each chat. The findings are handed back and merged into
+  //    the bot's deletion list (see bot-flow.ts mergeExportFindings / handleExportOnly).
   const selfSender = { '@type': 'messageSenderUser', user_id: myUserId };
   const found = new Map<number, TdUpdate[]>();
   let totalFound = 0;

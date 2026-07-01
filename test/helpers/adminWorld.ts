@@ -52,6 +52,8 @@ export interface WorldDef {
   archiveIds?: number[];
   /** Marked ids returned by getLeftChats (chats the user has left, via takeout). */
   leftChatIds?: number[];
+  /** Chat ids surfaced only through the "replies" service-chat scan (B3). */
+  repliesOrigins?: number[];
   chats: ChatDef[];
   users?: UserDef[];
   /**
@@ -97,6 +99,14 @@ export function buildAdminSend(
   const live = new Map<number, MsgDef[]>(world.chats.map((c) => [c.id, [...(c.history ?? [])]]));
   const historyOf = (chatId: unknown) => live.get(Number(chatId)) ?? [];
 
+  // The "replies" service chat (B3): its first history page carries the discovered origins as
+  // forward_info sources; a second page comes back empty so the scan terminates.
+  const REPLIES_CHAT_ID = 424242;
+  const repliesPage = (world.repliesOrigins ?? []).map((chatId, i) => ({
+    id: i + 1,
+    forward_info: { source: { chat_id: chatId } },
+  })) as unknown as TdUpdate[];
+
   return makeFakeSend({
     handlers: {
       getMe: { id: world.meId },
@@ -109,6 +119,12 @@ export function buildAdminSend(
       },
       // getLeftChats paginates: first page returns the left ids, then an empty page.
       getLeftChats: (p) => ({ chat_ids: Number(p.offset) === 0 ? (world.leftChatIds ?? []) : [] }),
+      // The B3 replies scan resolves the "replies" username only when the test opts in;
+      // otherwise it returns an id-less object so collectRepliesOriginChatIds bails.
+      searchPublicChat: (p) =>
+        ((p.username as string) === 'replies' && world.repliesOrigins
+          ? { id: REPLIES_CHAT_ID }
+          : {}) as TdUpdate,
       getChat: (p) => {
         const chat = byId(String(p.chat_id).replace('-100', ''));
         if (!chat) throw new Error(`no chat ${p.chat_id}`);
@@ -160,6 +176,9 @@ export function buildAdminSend(
         return { id: chat.startMsgId ?? 0 } as TdUpdate;
       },
       getChatHistory: (p) => {
+        if (Number(p.chat_id) === REPLIES_CHAT_ID) {
+          return { messages: Number(p.from_message_id) === 0 ? repliesPage : [] } as TdUpdate;
+        }
         const from = p.from_message_id as number;
         const msgs = historyOf(p.chat_id)
           .filter((m) => m.id < from)
