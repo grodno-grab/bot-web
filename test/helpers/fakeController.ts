@@ -68,8 +68,8 @@ export function makeFakeController(answers: ScriptedAnswers = {}): FakeControlle
       record('waitForConfirm', [summary]);
       return next<boolean>('confirm', false);
     },
-    waitForBotDone: async (text: string) => {
-      record('waitForBotDone', [text]);
+    waitForBotDone: async (text: string, title?: string) => {
+      record('waitForBotDone', [text, title]);
       return next<'back' | 'done'>('botDone', 'done');
     },
     waitForModeSelect: async () => {

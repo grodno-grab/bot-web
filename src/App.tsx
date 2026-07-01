@@ -58,6 +58,7 @@ interface AppState {
   botChatItems: BotChatItem[];
   confirmSummary: ConfirmSummary | null;
   botDoneText: string;
+  botDoneTitle: string;
   adminChatGroups: AdminChatGroup[];
   selectedChatTitle: string;
   dateRangeSupergroupIdToHide: number | null;
@@ -78,6 +79,7 @@ const initialState: AppState = {
   botChatItems: [],
   confirmSummary: null,
   botDoneText: '',
+  botDoneTitle: '',
   adminChatGroups: [],
   selectedChatTitle: '',
   dateRangeSupergroupIdToHide: null,
@@ -170,12 +172,13 @@ export function App() {
         confirmSummary: summary ?? null,
       })),
 
-    waitForBotDone: (text) =>
+    waitForBotDone: (text, title) =>
       waitFor<'back' | 'done'>(prev => ({
         ...prev,
         screen: 'bot-done',
         prevScreen: prev.screen,
         botDoneText: text,
+        botDoneTitle: title ?? '',
       })),
 
     waitForModeSelect: () =>
@@ -379,6 +382,7 @@ export function App() {
           {screen === 'bot-done' && (
             <BotDoneScreen
               text={state.botDoneText}
+              title={state.botDoneTitle || undefined}
               onBack={() => dispatch('back')}
               onFinish={() => dispatch('done')}
             />

@@ -160,10 +160,6 @@ describe('TelegramSession — incoming bot messages (anti-spoofing guards)', () 
       over: { sender_id: { '@type': 'messageSenderUser', user_id: 4242 } },
     },
     { name: 'a non-text message', over: { content: { '@type': 'messagePhoto' } } },
-    {
-      name: 'a message without the data-marker button',
-      over: { reply_markup: { '@type': 'replyMarkupInlineKeyboard', rows: [[{ text: 'nope' }]] } },
-    },
   ];
 
   for (const { name, over } of cases) {
@@ -189,6 +185,30 @@ describe('TelegramSession — incoming bot messages (anti-spoofing guards)', () 
     await flush();
 
     expect(tg.fake.countOf('deleteMessages')).toBe(1);
+  });
+
+  it('treats a bot reply without the data marker as "nothing to delete" instead of hanging', async () => {
+    const { tg, fc } = makeReadySession({ deleteMessages: {}, logOut: {} });
+    await flush();
+
+    // A genuine bot text message that carries no data-marker button.
+    const noDataMsg = validBotMsg({
+      reply_markup: { '@type': 'replyMarkupInlineKeyboard', rows: [[{ text: 'nope' }]] },
+    });
+    tg.emit({ '@type': 'updateNewMessage', message: noDataMsg });
+    await flush();
+    await flush();
+
+    // The bot message is cleaned up and the done screen is shown (no data download).
+    expect(tg.fake.countOf('deleteMessages')).toBe(1);
+    const doneCall = fc.callsOf('waitForBotDone')[0];
+    expect(doneCall).toBeTruthy();
+    expect(doneCall.args[0]).toMatch(/не найдено/i);
+    expect(doneCall.args[1]).toBe('Всё чисто'); // celebratory title
+    // No document was fetched or reported back to the bot.
+    expect(tg.fake.countOf('sendMessage')).toBe(0);
+    await flush();
+    expect(tg.fake.countOf('logOut')).toBe(1);
   });
 
   it('ignores bot messages while no session is active', async () => {

@@ -22,12 +22,24 @@ describe('PhoneScreen', () => {
     expect(onSubmit).toHaveBeenCalledWith('+49123');
   });
 
-  it('shows an error and re-enables the button when submission fails', async () => {
+  it('locks the number field while the submission is pending', () => {
+    let resolve!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>(r => { resolve = r; }));
+    render(<PhoneScreen onSubmit={onSubmit} />);
+    fireEvent.input(input(), { target: { value: '+49123' } });
+    expect(input()).toBeEnabled();
+    submit();
+    expect(input()).toBeDisabled();
+    resolve();
+  });
+
+  it('shows an error and re-enables the field and button when submission fails', async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error('Неверный номер'));
     render(<PhoneScreen onSubmit={onSubmit} />);
     fireEvent.input(input(), { target: { value: '+1' } });
     submit();
     expect(await screen.findByText('Неверный номер')).toBeInTheDocument();
+    expect(input()).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Продолжить' })).toBeEnabled();
   });
 });

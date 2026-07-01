@@ -62,3 +62,25 @@ test('decrypts the bot document, lists chats, deletes and reports done', async (
 
   expect(consoleErrors).toEqual([]);
 });
+
+test('shows the "nothing found" screen when the bot has no messages to delete', async ({ page }) => {
+  // The bot replies with a plain text message that carries no data-marker button.
+  const botMessage = {
+    '@type': 'message',
+    id: 999 * MUL,
+    chat_id: BOT_CHAT_ID,
+    sender_id: { '@type': 'messageSenderUser', user_id: BOT_CHAT_ID },
+    content: { '@type': 'messageText', text: { '@type': 'formattedText', text: 'Сообщений не найдено' } },
+  };
+
+  await installFakeTdweb(page, { meId: 777777, botChatId: BOT_CHAT_ID, bot: { botMessage } });
+
+  await page.goto('/');
+  await loginToModeSelect(page);
+
+  await page.getByText('Удалить мои сообщения').click();
+
+  // Regression: this used to hang on "Получение сообщений…" forever.
+  await expect(page.getByText('Всё чисто')).toBeVisible();
+  await expect(page.getByText(/Сообщений для удаления не найдено/)).toBeVisible();
+});

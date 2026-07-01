@@ -46,6 +46,7 @@ export function PasswordScreen({ hint, onSubmit }: Props) {
             placeholder=" "
             class="has-toggle"
             autocomplete="off"
+            disabled={loading}
             onFocus={() => setIconVisible(false)}
             onBlur={() => setIconVisible(true)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}

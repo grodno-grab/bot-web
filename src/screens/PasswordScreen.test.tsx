@@ -33,12 +33,24 @@ describe('PasswordScreen', () => {
     expect(input().getAttribute('type')).toBe('password');
   });
 
-  it('shows an error when submission fails', async () => {
+  it('locks the password field while the submission is pending', () => {
+    let resolve!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>(r => { resolve = r; }));
+    render(<PasswordScreen hint="" onSubmit={onSubmit} />);
+    fireEvent.input(input(), { target: { value: 'pw' } });
+    expect(input()).toBeEnabled();
+    submit();
+    expect(input()).toBeDisabled();
+    resolve();
+  });
+
+  it('shows an error and re-enables the field when submission fails', async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error('Неверный пароль'));
     render(<PasswordScreen hint="" onSubmit={onSubmit} />);
     fireEvent.input(input(), { target: { value: 'x' } });
     submit();
     expect(await screen.findByText('Неверный пароль')).toBeInTheDocument();
+    expect(input()).toBeEnabled();
   });
 
   it('submits on Enter', () => {

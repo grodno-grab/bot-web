@@ -6,7 +6,7 @@ import {
   EXIT_FALLBACK_URL,
   INIT_TIMEOUT_MS, EXIT_REDIRECT_DELAY_MS,
 } from './config';
-import { startBotFlow, handleBotMessage, sendBotResult } from './bot-flow';
+import { startBotFlow, handleBotMessage, handleNoBotData, sendBotResult } from './bot-flow';
 import { runAdminFlow } from './admin-flow';
 import type { TdUpdate, TelegramController } from './types';
 
@@ -185,24 +185,39 @@ export class TelegramSession {
     if ((msg.chat_id as number) !== BOT_CHAT_ID) return;
     if ((msg.sender_id as TdUpdate)?.user_id !== BOT_CHAT_ID) return;
     if ((msg.content as TdUpdate)?.['@type'] !== 'messageText') return;
-    const rows = (msg.reply_markup as TdUpdate)?.rows as TdUpdate[][] | undefined;
-    const hasMarker = rows?.some(row => row.some(btn => btn.text === BOT_DATA_BUTTON_TEXT));
-    if (!hasMarker) return;
 
     this.isSessionActive = false;
     const send = this.send.bind(this);
 
-    const result = await handleBotMessage(msg, send, this.ctrl);
+    // A genuine bot reply carries the data marker button. Without it, the bot is
+    // telling us there is nothing to delete — otherwise the flow would hang on
+    // "Получение сообщений…" waiting for a data message that never comes.
+    const rows = (msg.reply_markup as TdUpdate)?.rows as TdUpdate[][] | undefined;
+    const hasData = rows?.some(row => row.some(btn => btn.text === BOT_DATA_BUTTON_TEXT));
+
+    const result = hasData
+      ? await handleBotMessage(msg, send, this.ctrl)
+      : await handleNoBotData(msg, send);
+
     if (result === 'back') {
       this.isSessionActive = true;
       await this.routePostAuthFlow();
       return;
     }
-    await sendBotResult(result, send, this.ctrl);
-    const doneText = result.length === 0
-      ? 'Все найденные сообщения успешно удалены.'
-      : `Не удалось удалить сообщения из ${result.length} чатов.`;
-    const action = await this.ctrl.waitForBotDone(doneText);
+
+    let doneText: string;
+    let doneTitle: string | undefined;
+    if (result === 'no-data') {
+      doneTitle = 'Всё чисто';
+      doneText = 'Сообщений для удаления не найдено — ваши чаты уже чистые.';
+    } else {
+      await sendBotResult(result, send, this.ctrl);
+      doneText = result.length === 0
+        ? 'Все найденные сообщения успешно удалены.'
+        : `Не удалось удалить сообщения из ${result.length} чатов.`;
+    }
+
+    const action = await this.ctrl.waitForBotDone(doneText, doneTitle);
     if (action === 'back') {
       this.isSessionActive = true;
       await this.routePostAuthFlow();

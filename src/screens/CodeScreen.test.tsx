@@ -34,6 +34,15 @@ describe('CodeScreen', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('locks the code field while the submission is pending', () => {
+    let resolve!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>(r => { resolve = r; }));
+    render(<CodeScreen onSubmit={onSubmit} />);
+    fireEvent.input(input(), { target: { value: '12345' } }); // auto-submit
+    expect(input()).toBeDisabled();
+    resolve();
+  });
+
   it('shows an error and re-enables input when the code is rejected', async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error('Неверный код'));
     render(<CodeScreen onSubmit={onSubmit} />);

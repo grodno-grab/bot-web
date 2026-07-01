@@ -53,7 +53,7 @@ export interface TelegramController {
 
   waitForChatSelect(chats: BotChatItem[]): Promise<Set<number> | null>;
   waitForConfirm(summary?: ConfirmSummary): Promise<boolean>;
-  waitForBotDone(text: string): Promise<'back' | 'done'>;
+  waitForBotDone(text: string, title?: string): Promise<'back' | 'done'>;
   waitForModeSelect(): Promise<'user' | 'admin'>;
   waitForAdminChatSelect(groups: AdminChatGroup[]): Promise<TdChat | null>;
   waitForDateRange(chatTitle: string, supergroupIdToHide?: number): Promise<DateRange | null>;

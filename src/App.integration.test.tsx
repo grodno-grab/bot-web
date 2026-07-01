@@ -386,6 +386,39 @@ describe('App — delete-my-messages flow', () => {
     await waitFor(() => expect(fake.countOf('logOut')).toBeGreaterThanOrEqual(1));
   });
 
+  it('shows the "nothing found" screen when the bot has no messages to delete', async () => {
+    const fake = makeFakeSend({
+      handlers: {
+        searchPublicChat: { id: BOT_CHAT_ID },
+        deleteMessages: {},
+        logOut: {},
+      },
+    });
+
+    // The bot replies with a plain text message carrying no data-marker button.
+    const botMessage = {
+      '@type': 'message',
+      id: 999 * MUL,
+      chat_id: BOT_CHAT_ID,
+      sender_id: { '@type': 'messageSenderUser', user_id: BOT_CHAT_ID },
+      content: { '@type': 'messageText', text: { '@type': 'formattedText', text: 'Сообщений не найдено' } },
+    };
+
+    installTdSimulator({ onSend: fake.send, botMessage });
+    render(<App />);
+    await loginToModeSelect();
+
+    clickText('Удалить мои сообщения');
+
+    // Instead of hanging on "Получение сообщений…", the done screen is shown.
+    expect(await screen.findByText('Всё чисто')).toBeInTheDocument();
+    expect(screen.getByText(/Сообщений для удаления не найдено/)).toBeInTheDocument();
+
+    // Finishing logs the session out.
+    clickBtn('Завершить');
+    await waitFor(() => expect(fake.countOf('logOut')).toBeGreaterThanOrEqual(1));
+  });
+
   // Shared setup that drives the user flow up to the chat-selection screen.
   async function gotoChatSelect() {
     const meId = 777777;

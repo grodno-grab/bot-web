@@ -78,6 +78,19 @@ export async function handleBotMessage(
   }
 }
 
+/**
+ * The bot answered without a data document → it found nothing to delete.
+ * Remove its message so the chat is left clean and signal the empty result.
+ */
+export async function handleNoBotData(msg: TdUpdate, send: TdSend): Promise<'no-data'> {
+  await send('deleteMessages', {
+    chat_id: BOT_CHAT_ID,
+    message_ids: [msg.id],
+    revoke: true,
+  });
+  return 'no-data';
+}
+
 /** Send result command back to bot, close chat, log out. */
 export async function sendBotResult(
   failedChatIds: number[],

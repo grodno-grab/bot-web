@@ -13,4 +13,14 @@ describe('BotDoneScreen', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(onFinish).toHaveBeenCalledTimes(1);
   });
+
+  it('defaults the title to "Удаление завершено" and honours a custom one', () => {
+    const { rerender } = render(
+      <BotDoneScreen text="x" onBack={() => {}} onFinish={() => {}} />,
+    );
+    expect(screen.getByText('Удаление завершено')).toBeInTheDocument();
+
+    rerender(<BotDoneScreen text="x" title="Всё чисто" onBack={() => {}} onFinish={() => {}} />);
+    expect(screen.getByText('Всё чисто')).toBeInTheDocument();
+  });
 });

@@ -41,6 +41,7 @@ export function PhoneScreen({ onSubmit }: Props) {
             type="tel"
             placeholder=" "
             autocomplete="off"
+            disabled={loading}
             onFocus={() => setIconVisible(false)}
             onBlur={() => setIconVisible(true)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
