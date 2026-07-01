@@ -1,0 +1,8 @@
+# Flat node_modules instead of pnpm's isolated symlink tree: the postinstall patch
+# scripts/patch-deps.mjs walks flat paths node_modules/@preact/... and node_modules/@mtcute/...
+nodeLinker: hoisted
+
+# Supply-chain cooldown: resolve only versions older than 7 days (10080 min) so a freshly
+# hijacked release can't enter the lockfile before the ecosystem flags it. pnpm picks the newest
+# mature version within each range and re-checks every lockfile entry on install.
+minimumReleaseAge: 10080

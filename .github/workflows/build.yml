@@ -71,9 +71,12 @@ jobs:
           path: dist/index.html
           if-no-files-found: error
 
+      - run: corepack enable
+
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: pnpm
 
       - name: Deploy to GCS
         env:
@@ -82,7 +85,7 @@ jobs:
           GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
           SKIP_BUILD: "1"
         run: |
-          npm install
+          pnpm install --frozen-lockfile
           node scripts/deploy.mjs | tee /tmp/deploy.log
           PROD_URL=$(grep -oP 'Currently on production: \K\S+' /tmp/deploy.log || true)
           RC_URL=$(grep -oP 'Release candidate: \K\S+' /tmp/deploy.log)

@@ -16,6 +16,27 @@ export function selectVersionsToDelete(versions, keepGenerations) {
   return versions.filter((v) => !keep.has(String(v.metadata.generation)));
 }
 
+/**
+ * Build a `multipart/related` request body for the GCS JSON upload API: a JSON
+ * metadata part followed by the media part. Pure/synchronous so it can be tested.
+ * Returns the body Buffer and the matching Content-Type header value.
+ */
+export function buildMultipartRelated({ metadata, media, mediaContentType, boundary }) {
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      `${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Type: ${mediaContentType}\r\n\r\n`,
+    'utf-8',
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf-8');
+  return {
+    body: Buffer.concat([head, media, tail]),
+    contentType: `multipart/related; boundary=${boundary}`,
+  };
+}
+
 /** Parse a config.json buffer, transparently handling gzip-compressed content. */
 export function parseConfig(rawBuffer) {
   try {

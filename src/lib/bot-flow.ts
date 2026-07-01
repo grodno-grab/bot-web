@@ -99,7 +99,7 @@ async function runDeletionSelection(
     };
     const confirmed = await ctrl.waitForConfirm(summary);
     if (confirmed) return processChats(filtered, send, ctrl);
-    // confirmed === false → вернуться к выбору чатов
+    // confirmed === false → back to chat selection
   }
 }
 

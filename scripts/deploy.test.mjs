@@ -6,6 +6,7 @@ import {
   selectVersionsToDelete,
   parseConfig,
   classifyConfigUrl,
+  buildMultipartRelated,
 } from './deploy-logic.mjs';
 
 const GCS = 'https://storage.googleapis.com';
@@ -40,6 +41,27 @@ describe('selectVersionsToDelete', () => {
   it('compares generations regardless of string/number type', () => {
     const versions = [v(1), v(2)];
     expect(selectVersionsToDelete(versions, ['1']).map((x) => x.metadata.generation)).toEqual([2]);
+  });
+});
+
+describe('buildMultipartRelated', () => {
+  it('frames the JSON metadata and media parts with the boundary', () => {
+    const media = Buffer.from([0x01, 0x02, 0x03]);
+    const { body, contentType } = buildMultipartRelated({
+      metadata: { name: 'index.html', contentEncoding: 'br' },
+      media,
+      mediaContentType: 'text/html; charset=utf-8',
+      boundary: 'B',
+    });
+    expect(contentType).toBe('multipart/related; boundary=B');
+    const text = body.toString('latin1');
+    expect(text).toContain(
+      '--B\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"index.html","contentEncoding":"br"}',
+    );
+    expect(text).toContain('--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n');
+    expect(text.endsWith('\r\n--B--\r\n')).toBe(true);
+    // media bytes survive verbatim
+    expect(body.includes(media)).toBe(true);
   });
 });
 
