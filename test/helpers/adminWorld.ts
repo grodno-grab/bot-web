@@ -50,6 +50,8 @@ export interface WorldDef {
   meId: number;
   chatIds: number[];
   archiveIds?: number[];
+  /** Marked ids returned by getLeftChats (chats the user has left, via takeout). */
+  leftChatIds?: number[];
   chats: ChatDef[];
   users?: UserDef[];
   /**
@@ -105,6 +107,8 @@ export function buildAdminSend(
         const list = (p.chat_list as { '@type': string })['@type'];
         return { chat_ids: list === 'chatListArchive' ? (world.archiveIds ?? []) : world.chatIds };
       },
+      // getLeftChats paginates: first page returns the left ids, then an empty page.
+      getLeftChats: (p) => ({ chat_ids: Number(p.offset) === 0 ? (world.leftChatIds ?? []) : [] }),
       getChat: (p) => {
         const chat = byId(String(p.chat_id).replace('-100', ''));
         if (!chat) throw new Error(`no chat ${p.chat_id}`);

@@ -45,7 +45,7 @@ test('deletes a member end-to-end and returns to a closeable state', async ({ pa
   await expect(page.getByText(/Обработано пользователей: 1/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Завершить' }).click();
-  await expect(page.getByText('Можно закрыть вкладку.')).toBeVisible();
+  await expect(page.getByText('Готово. Можно закрыть вкладку.')).toBeVisible();
 });
 
 test('shows a date validation error for an inverted range', async ({ page }) => {

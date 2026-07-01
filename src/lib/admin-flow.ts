@@ -1,7 +1,8 @@
 import { formatMonthYear } from './utils';
+import { sendFloodSafe } from './flood';
 import {
   CHAT_LOAD_BATCH_LIMIT, CHAT_LIST_MAX,
-  MESSAGE_HISTORY_LIMIT, ADMIN_CHECK_BATCH_SIZE, MAX_VERIFY_PASSES, DELETE_MESSAGES_BATCH_SIZE, MAX_DELETE_RETRIES,
+  MESSAGE_HISTORY_LIMIT, MAX_VERIFY_PASSES, DELETE_MESSAGES_BATCH_SIZE, MAX_DELETE_RETRIES,
 } from './config';
 import type { AdminChatGroup, TdChat, TdSend, TdUpdate, TelegramController } from './types';
 
@@ -14,12 +15,18 @@ import type { AdminChatGroup, TdChat, TdSend, TdUpdate, TelegramController } fro
 export async function runAdminFlow(
   send: TdSend,
   ctrl: TelegramController,
+  takeoutSessionId: string | null = null,
 ): Promise<'back' | 'completed' | 'error'> {
   ctrl.showWorking('Получение данных пользователя…');
   const me = await send('getMe') as TdUpdate & { id: number };
 
+  // Include chats the user has left (via the takeout session): they may still hold admin
+  // rights there. Unlike the bot flow, we don't fetch messages — only check permissions.
   ctrl.showWorking('Загрузка списка чатов…');
-  const chatIds = await loadAllChatIds(send);
+  const currentIds = await loadAllChatIds(send);
+  const leftIds = await collectLeftChatIds(send, takeoutSessionId,
+    (n) => ctrl.showWorking(`Поиск покинутых чатов… найдено ${n}`));
+  const chatIds = [...new Set([...currentIds, ...leftIds])];
   const adminChats = await filterAdminChats(chatIds, me.id, send, ctrl);
 
   if (adminChats.length === 0) {
@@ -39,7 +46,7 @@ export async function runAdminFlow(
   }
 
   try { await send('logOut'); } catch (_) {}
-  ctrl.showWorking('Можно закрыть вкладку.', false);
+  ctrl.showWorking('Готово. Можно закрыть вкладку.', false);
   return 'completed';
 }
 
@@ -87,7 +94,7 @@ async function runChatDeletionFlow(
   }
 }
 
-async function loadAllChatIds(send: TdSend): Promise<number[]> {
+export async function loadAllChatIds(send: TdSend): Promise<number[]> {
   for (const chatList of [{ '@type': 'chatListMain' }, { '@type': 'chatListArchive' }]) {
     while (true) {
       try {
@@ -107,6 +114,28 @@ async function loadAllChatIds(send: TdSend): Promise<number[]> {
   return [...ids];
 }
 
+/** Marked ids of channels/supergroups the user has left, via the takeout session. */
+export async function collectLeftChatIds(
+  send: TdSend,
+  takeoutId: string | null,
+  onProgress?: (total: number) => void,
+): Promise<number[]> {
+  if (!takeoutId) return [];
+  const ids: number[] = [];
+  for (let offset = 0; ;) {
+    const result = await send('getLeftChats', {
+      takeout_session_id: takeoutId,
+      offset,
+    }) as TdUpdate & { chat_ids?: number[] };
+    const page = result.chat_ids ?? [];
+    if (page.length === 0) break;
+    ids.push(...page);
+    offset += page.length;
+    onProgress?.(ids.length);
+  }
+  return ids;
+}
+
 async function filterAdminChats(
   chatIds: number[],
   myUserId: number,
@@ -115,35 +144,31 @@ async function filterAdminChats(
 ): Promise<TdChat[]> {
   const result: TdChat[] = [];
 
-  for (let i = 0; i < chatIds.length; i += ADMIN_CHECK_BATCH_SIZE) {
-    const batch = chatIds.slice(i, i + ADMIN_CHECK_BATCH_SIZE);
-    ctrl.showWorking(
-      `Проверка чатов ${i + 1}–${Math.min(i + ADMIN_CHECK_BATCH_SIZE, chatIds.length)} из ${chatIds.length}…`,
-    );
+  // Sequential (not batched): parallel channels.getParticipant calls trigger FLOOD_WAIT,
+  // and retrying a whole batch in parallel just re-floods → admin chats get dropped. A serial
+  // pass lets sendFloodSafe wait each flood out (with the same "Пауза…" countdown as the export
+  // scan), so nothing is lost. getChat is served from cache here (chats came from loadChats /
+  // getLeftChats), so only getChatMember hits the network.
+  for (let i = 0; i < chatIds.length; i++) {
+    ctrl.showWorking(`Проверка чатов… ${i + 1} из ${chatIds.length}`);
+    try {
+      const chat = await send('getChat', { chat_id: chatIds[i] }) as unknown as TdChat;
+      if (chat.type?.['@type'] !== 'chatTypeSupergroup' || chat.type?.is_channel) continue;
 
-    const checks = await Promise.all(batch.map(async (chatId) => {
-      try {
-        const chat = await send('getChat', { chat_id: chatId }) as unknown as TdChat;
-        if (chat.type?.['@type'] !== 'chatTypeSupergroup' || chat.type?.is_channel) return null;
+      const member = await sendFloodSafe(send, 'getChatMember', {
+        chat_id: chat.id,
+        member_id: { '@type': 'messageSenderUser', user_id: myUserId },
+      }, ctrl, `проверка прав ${i + 1}/${chatIds.length}`) as TdUpdate & { status?: TdUpdate };
 
-        const member = await send('getChatMember', {
-          chat_id: chat.id,
-          member_id: { '@type': 'messageSenderUser', user_id: myUserId },
-        }) as TdUpdate & { status?: TdUpdate };
+      const status = member?.status?.['@type'];
+      const canDelete =
+        status === 'chatMemberStatusCreator' ||
+        (status === 'chatMemberStatusAdministrator' &&
+         (member.status as TdUpdate & { rights?: TdUpdate & { can_delete_messages?: boolean } })
+           .rights?.can_delete_messages);
 
-        const status = member?.status?.['@type'];
-        const canDelete =
-          status === 'chatMemberStatusCreator' ||
-          (status === 'chatMemberStatusAdministrator' &&
-           (member.status as TdUpdate & { rights?: TdUpdate & { can_delete_messages?: boolean } })
-             .rights?.can_delete_messages);
-
-        if (canDelete) return chat;
-      } catch (_) {}
-      return null;
-    }));
-
-    result.push(...checks.filter((c): c is TdChat => c !== null));
+      if (canDelete) result.push(chat);
+    } catch (_) { /* not a supergroup / not accessible — skip */ }
   }
 
   return result;
@@ -209,6 +234,7 @@ async function runAdminDeletion(
   send: TdSend,
   ctrl: TelegramController,
 ): Promise<AdminDeletionResult> {
+  ctrl.showWorking('Подготовка удаления…');
   const getStartMsgId = async (): Promise<number> => {
     const endMsg = await send('getChatMessageByDate', { chat_id: chat.id, date: endTs }) as TdUpdate & { id: number };
     return endMsg.id + 1;
@@ -242,8 +268,9 @@ async function runAdminDeletion(
   }
 
   if (userIds.size > 0) {
-    ctrl.showWorking('Удаление сообщений участников…');
+    let doneUsers = 0;
     for (const userId of userIds) {
+      ctrl.showWorking(`Удаление сообщений участников… ${++doneUsers} из ${userIds.size}`);
       try {
         await send('deleteChatMessagesBySender', {
           chat_id: chat.id,

@@ -60,6 +60,48 @@ describe('runAdminFlow — discovery', () => {
     expect(titles.sort()).toEqual(['AdminCanDelete', 'Creator']);
   });
 
+  it('also checks left chats (via takeout) for admin rights', async () => {
+    const world: WorldDef = {
+      meId: ME,
+      chatIds: [5001],
+      leftChatIds: [7001, 7002], // chats the user has left
+      chats: [
+        { id: 5001, title: 'Current', supergroupId: 5001, myStatus: 'creator' },
+        { id: 7001, title: 'LeftButCreator', supergroupId: 7001, myStatus: 'creator' },
+        { id: 7002, title: 'LeftJustMember', supergroupId: 7002, myStatus: 'member' },
+      ],
+    };
+    const { send } = buildAdminSend(world);
+    const fc = makeFakeController({ adminChatSelect: [null] });
+
+    const result = await runAdminFlow(send, fc.ctrl, '42'); // takeout session id present
+
+    expect(result).toBe('back');
+    const titles = groupsArg(fc).flatMap((g) => g.chats.map((c) => c.title));
+    // The left chat where the user is still creator is included; the member-only one is not.
+    expect(titles.sort()).toEqual(['Current', 'LeftButCreator']);
+  });
+
+  it('does not query left chats when there is no takeout session', async () => {
+    const world: WorldDef = {
+      meId: ME,
+      chatIds: [5001],
+      leftChatIds: [7001],
+      chats: [
+        { id: 5001, title: 'Current', supergroupId: 5001, myStatus: 'creator' },
+        { id: 7001, title: 'Left', supergroupId: 7001, myStatus: 'creator' },
+      ],
+    };
+    const admin = buildAdminSend(world);
+    const fc = makeFakeController({ adminChatSelect: [null] });
+
+    await runAdminFlow(admin.send, fc.ctrl); // no takeout id → left chats not fetched
+
+    expect(admin.countOf('getLeftChats')).toBe(0);
+    const titles = groupsArg(fc).flatMap((g) => g.chats.map((c) => c.title));
+    expect(titles).toEqual(['Current']);
+  });
+
   it('groups chats into public/private and sorts each group by title', async () => {
     const world: WorldDef = {
       meId: ME,
