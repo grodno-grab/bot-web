@@ -39,11 +39,12 @@ Everything runs **locally inside the browser**. No data is sent to any third-par
 
 ## Development
 
-Local development requires `public/tdweb.inlined.js` to be present (it contains the TDLib
-WebAssembly runtime and is built by Docker Stage 1 — see Production build below).
+Local development requires `dist/tdweb.inlined.js` to be present (it contains the TDLib
+WebAssembly runtime and is built by Docker Stage 1 — see Production build below). The `prestart`
+script copies it into `public/` and refuses to start the dev server if it is missing.
 
 ```sh
-# 1. Get public/tdweb.inlined.js from a prior Docker build or build it yourself (see below)
+# 1. Get dist/tdweb.inlined.js from a prior Docker build (npm start copies it into public/)
 # 2. Install dependencies and start the dev server
 npm ci
 npm start
@@ -112,8 +113,9 @@ The repository includes a GitHub Actions workflow (`.github/workflows/build.yml`
 2. Reads `VITE_*` variables from the repository's **Variables** settings (Settings → Secrets and variables → Actions → Variables)
 3. Runs the build inside Docker
 4. Prints the SHA-256 hash of `dist/index.html`
-5. Uploads `index.html` as a downloadable artifact
-6. Deploys to Google Cloud Storage and posts the versioned URLs to the job summary
+5. Creates a [SLSA build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for `dist/index.html`
+6. Uploads `index.html` as a downloadable artifact
+7. Deploys to Google Cloud Storage and posts the versioned URLs to the job summary
 
 The job summary shows two URLs:
 - **Currently on production** — the URL currently stored in `config.json` (the live version)
@@ -129,6 +131,25 @@ For automatic deployment, also set the following in repository settings:
 | `GCS_CREDENTIALS` | Secret | JSON service-account key with write access |
 
 All three GCS settings must be configured; if any is missing the deploy step fails the workflow.
+
+### Promoting a release to production
+
+`build.yml` only publishes a release candidate — the live version changes solely through the manual
+`deploy-production.yml` workflow. It takes two inputs, and both must come from the same build run:
+the release-candidate **URL** and the **SHA-256** printed by that build.
+
+The workflow checks out `web-bootloader`, downloads the page, verifies its build provenance
+attestation, signs URL and content with `scripts/sign.mjs`, and uploads the resulting `config.json`
+to the bucket, where the bootloader picks it up on the next page load. A hash that does not match, or
+a page without a valid attestation, aborts the run — in the case of the hash, before the signing key
+is used at all.
+
+`sign.yml` runs the same checks and signing but stops short of publishing: it uploads `config.json`
+as a workflow artifact for manual review or manual upload.
+
+| Name | Kind | Description |
+|------|------|-------------|
+| `SIGNING_KEY` | Secret | ML-DSA-65 private key whose public half is built into the bootloader |
 
 ### Version retention and stale URL cleanup
 

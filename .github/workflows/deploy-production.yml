@@ -6,6 +6,9 @@ on:
       url:
         description: 'Immutable URL from build summary (e.g. https://storage.googleapis.com/<bucket>?generation=12345)'
         required: true
+      sha256:
+        description: 'SHA-256 of dist/index.html printed by the same build run'
+        required: true
 
 jobs:
   sign:
@@ -13,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      attestations: read
 
     steps:
       - name: Check out web-bootloader
@@ -27,13 +31,24 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Fetch the page and verify its build provenance
+        env:
+          URL: ${{ inputs.url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsSL "$URL" -o page.html
+          gh attestation verify page.html --repo ${{ github.repository }}
+
       - name: Write signing key
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: printf '%s' "$SIGNING_KEY" > /tmp/signing.key
 
       - name: Sign
-        run: npm run sign -- --url "${{ inputs.url }}" --keys /tmp/signing.key
+        env:
+          URL: ${{ inputs.url }}
+          SHA256: ${{ inputs.sha256 }}
+        run: npm run sign -- --url "$URL" --file page.html --sha256 "$SHA256" --keys /tmp/signing.key
 
       - name: Authenticate to GCS
         uses: google-github-actions/auth@v3
