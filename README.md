@@ -45,7 +45,7 @@ WebAssembly runtime and is built by Docker Stage 1 — see Production build belo
 ```sh
 # 1. Get public/tdweb.inlined.js from a prior Docker build or build it yourself (see below)
 # 2. Install dependencies and start the dev server
-npm install
+npm ci
 npm start
 ```
 

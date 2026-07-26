@@ -82,7 +82,7 @@ jobs:
           GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
           SKIP_BUILD: "1"
         run: |
-          npm install
+          npm ci --ignore-scripts
           node scripts/deploy.mjs | tee /tmp/deploy.log
           PROD_URL=$(grep -oP 'Currently on production: \K\S+' /tmp/deploy.log || true)
           RC_URL=$(grep -oP 'Release candidate: \K\S+' /tmp/deploy.log)

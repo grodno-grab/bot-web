@@ -68,7 +68,10 @@ FROM node:24.14.1-alpine3.23
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --ignore-scripts
+RUN npm ci --ignore-scripts
+
+COPY scripts/patch-deps.mjs ./scripts/
+RUN node scripts/patch-deps.mjs
 
 # tdweb.inlined.js (~18 MB) with embedded WASM from Stage 1
 COPY --from=tdlib-builder /build/tdlib-output/tdweb.inlined.js ./public/tdweb.inlined.js
